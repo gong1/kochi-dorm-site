@@ -1681,3 +1681,11 @@ footer{
 }
 
 }
+
+.cloud-gate{min-height:100vh;display:grid;place-items:center;padding:32px 18px;background:var(--bg,#f5f6f1)}
+.cloud-login{width:min(100%,480px);padding:32px}
+.cloud-login .brand{margin-bottom:30px}.cloud-login h1{font-size:28px;margin:8px 0 12px}
+.cloud-login>p{color:var(--muted,#6e7872);line-height:1.7}.cloud-login form{display:grid;gap:18px;margin:26px 0 18px}
+.cloud-login small{display:block;color:var(--muted,#6e7872);line-height:1.7}
+.cloud-gate-actions{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0}
+@media(max-width:500px){.cloud-login{padding:24px}.top-actions{flex-wrap:wrap;justify-content:flex-end;gap:8px}}

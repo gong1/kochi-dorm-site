@@ -44,6 +44,7 @@ export function photoIds(state) {
   return [...new Set(readings.flatMap(r=>[r.electricPhoto?.id,r.gasPhoto?.id]).filter(Boolean))];
 }
 export function validateBackup(data,mode) {
+  if(mode==='cloud')throw new Error('云端暂不支持整份替换恢复，请保留导出备份并联系管理方。');
   if(data?.format!=='kochi-dorm-local-backup'||data.version!==1||data.state?.mode!==mode) throw new Error('备份格式不正确或数据区不同；请先切换至备份对应的示例/本机数据区。');
   validateState(data.state);
   if(!Array.isArray(data.photos)||data.photos.length>6000) throw new Error('照片备份格式不正确。');

@@ -129,7 +129,7 @@ export function blankState() {
 }
 export function validateState(s) {
   if (!s || s.version!==VERSION || !Array.isArray(s.stays)||!Array.isArray(s.readings)||!Array.isArray(s.rates)||!Array.isArray(s.bills)) throw new Error('备份格式或版本不正确。');
-  if(typeof s.homeName!=='string'||!s.homeName.trim()||s.homeName.length>80 || s.mode!==undefined&&!['demo','local'].includes(s.mode)) throw new Error('宿舍名称或数据区无效。');
+  if(typeof s.homeName!=='string'||!s.homeName.trim()||s.homeName.length>80 || s.mode!==undefined&&!['demo','local','cloud'].includes(s.mode)) throw new Error('宿舍名称或数据区无效。');
   if(s.stays.length>2000||s.readings.length>3000||s.bills.length>1500||!s.rates.length) throw new Error('数据量或合同配置无效。');
   validateStays(s.stays); s.rates.forEach(validateRate);
   if(new Set(s.rates.map(r=>r.from)).size!==s.rates.length) throw new Error('同一生效月份有重复合同。');
