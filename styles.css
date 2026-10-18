@@ -1689,3 +1689,30 @@ footer{
 .cloud-login small{display:block;color:var(--muted,#6e7872);line-height:1.7}
 .cloud-gate-actions{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0}
 @media(max-width:500px){.cloud-login{padding:24px}.top-actions{flex-wrap:wrap;justify-content:flex-end;gap:8px}}
+
+/* Imported historical agreements stay distinct from monthly calculations. */
+.other-data{width:100%;color:var(--muted);font-size:12px}
+.other-data summary{cursor:pointer;min-height:36px;display:flex;align-items:center}
+.other-data>div{display:flex;flex-wrap:wrap;gap:16px;padding:10px 0}
+.other-data.panel{margin-bottom:22px}
+.history-heading{display:flex;gap:20px;align-items:center;justify-content:space-between;margin-bottom:22px;flex-wrap:wrap}
+.history-heading>div:first-child{flex:1;min-width:220px}
+.history-heading p{color:var(--muted);margin-top:6px;font-size:12px}
+.history-heading .field{min-width:180px;margin:0}
+.history-person{padding:22px 0;border-top:1px solid var(--line)}
+.history-person:first-child{border-top:0;padding-top:6px}
+.history-person-heading{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+.history-person h3{font-size:16px}
+.history-person>p,.history-person>small{display:block;color:var(--muted);font-size:11px;margin-top:7px}
+.history-person dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:15px 0 6px}
+.history-person dt{font-size:11px;color:var(--muted)}
+.history-person dd{font-size:16px;font-weight:650;margin:3px 0 0;overflow-wrap:anywhere}
+.history-basis{margin-top:24px}
+.occupancy-review{margin:24px 0}
+.occupancy-review>p{margin:12px 0;color:var(--muted);font-size:12px}
+.occupancy-review form{display:grid;gap:15px;margin-top:16px}
+.occupancy-review form .button{justify-self:start}
+.history-basis>p{margin-top:12px;overflow-wrap:anywhere}
+.history-meter{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;background:var(--bg);padding:18px;border-radius:10px;margin:18px 0}
+.history-meter p{font-size:12px;margin-top:5px}
+@media(max-width:680px){.history-heading{gap:14px}.history-heading>.button,.history-heading>.field{width:100%}.history-person dl{gap:8px}.history-person dd{font-size:14px}.history-meter{grid-template-columns:1fr}.history-basis{margin-top:18px}}

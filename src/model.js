@@ -1,4 +1,5 @@
 import {blankState, calculateMonth, cents, monthBounds, today, validateState, validDate} from './engine.js';
+import {assertMonthOutsideLegacy, legacyNextMonth} from './history.js';
 
 export const id = () => crypto.randomUUID();
 export function exampleState() {
@@ -18,6 +19,7 @@ export function exampleState() {
 export function newLocalState() {return {...blankState(),mode:'local'};}
 export function paidFor(bill,personId) {return (bill.payments||[]).filter(p=>p.personId===personId).reduce((n,p)=>n+p.cents,0);}
 export function confirmMonth(state,month,reviewed) {
+  assertMonthOutsideLegacy(state,month);
   if(!reviewed) throw new Error('请先核对分摊规则、估算说明和金额。');
   if(state.bills.some(b=>b.month===month)) throw new Error('该月已经确认，不能重复生成或覆盖。');
   const result=calculateMonth({...state,month});
@@ -58,5 +60,6 @@ export function validateBackup(data,mode) {
 }
 export function suggestedMonth(state) {
   const latest=state.readings.map(r=>r.period.slice(0,7)).sort().at(-1);
-  const month=latest||today().slice(0,7);monthBounds(month);return month;
+  const suggested=legacyNextMonth(state);
+  const month=suggested&&(!latest||latest<suggested)?suggested:latest||today().slice(0,7);monthBounds(month);return month;
 }

@@ -1,3 +1,4 @@
+import {validateLegacyState, assertMonthOutsideLegacy} from './history.js';
 export const VERSION = 1;
 export const FEES = [
   ['electricUsage', '电用量费'], ['electricBase', '电基本费'],
@@ -83,7 +84,8 @@ export function validateReading(r) {
   if (!r.confirmed) throw new Error('请核对并确认两项表数。');
   if (r.actual!==r.period && !r.override) throw new Error('实际抄表日与归属日期不同，请明确确认按归属日期处理。');
 }
-export function calculateMonth({month,stays,readings,rates}) {
+export function calculateMonth({month,stays,readings,rates,legacySettlements,legacyOccupancyReviewedAt}) {
+  assertMonthOutsideLegacy({legacySettlements,legacyOccupancyReviewedAt},month);
   const b=monthBounds(month), r=rateFor(rates,month);
   validateStays(stays);
   const start=readings.find(x=>x.period===b.previous), end=readings.find(x=>x.period===b.end);
@@ -157,5 +159,5 @@ export function validateState(s) {
     for(const p of b.payments) if(!p.id || p.personId==='__owner' || !b.result.rows.some(r=>r.id===p.personId)||!Number.isSafeInteger(p.cents)||p.cents<=0||!validDate(p.date)) throw new Error('收款记录无效。');
     for(const row of b.result.rows) if((b.payments||[]).filter(p=>p.personId===row.id).reduce((s,p)=>s+p.cents,0)>row.total) throw new Error('收款超过应交金额。');
   }
-  return s;
+  return validateLegacyState(s);
 }
