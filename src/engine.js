@@ -97,7 +97,7 @@ export function validateMeterResult(result,kind) {
   return result;
 }
 export function validateMeterRecognition(metadata,kind) {
-  if(!exactKeys(metadata,['version','provider','model','recognizedAt','requestId','result'])||metadata.version!==1||metadata.provider!=='OpenAI'||
+  if(!exactKeys(metadata,['version','provider','model','recognizedAt','requestId','result'])||metadata.version!==1||!['OpenAI','Anthropic'].includes(metadata.provider)||
     typeof metadata.model!=='string'||!metadata.model||metadata.model.length>100||typeof metadata.requestId!=='string'||!OCR_UUID.test(metadata.requestId)||
     typeof metadata.recognizedAt!=='string'||!Number.isFinite(Date.parse(metadata.recognizedAt))||new Date(metadata.recognizedAt).toISOString()!==metadata.recognizedAt)
     throw new Error('AI识别记录无效，请重新核对照片。');
