@@ -19,6 +19,13 @@ const SAFE_ERRORS = Object.freeze({
   OCR_PROVIDER_CREDIT: 'Anthropic API额度不足，请检查API账户余额或用量上限；仍可手工录入。',
   OCR_PROVIDER_RATE_LIMIT: 'Anthropic服务限流或达到API账户限额，请稍后重试或检查API账户；仍可手工录入。',
   OCR_PROVIDER_LIMIT: 'Anthropic服务未接受请求，请检查API账户或服务配置；仍可手工录入。',
+  OCR_PROVIDER_MODEL: 'Anthropic未接受当前模型，请检查模型权限与服务配置；仍可手工录入。',
+  OCR_PROVIDER_THINKING: 'Anthropic未接受thinking参数，请管理方调整服务配置；仍可手工录入。',
+  OCR_PROVIDER_EFFORT: 'Anthropic未接受effort参数，请管理方调整服务配置；仍可手工录入。',
+  OCR_PROVIDER_TOKENS: 'Anthropic未接受输出长度参数，请管理方调整服务配置；仍可手工录入。',
+  OCR_PROVIDER_PARAMETERS: 'Anthropic未接受请求参数，请管理方检查服务配置；仍可手工录入。',
+  OCR_PROVIDER_SCHEMA: 'Anthropic未接受识别结果格式，请管理方检查服务配置；仍可手工录入。',
+  OCR_PROVIDER_IMAGE: 'Anthropic未能读取照片，请重新选择清晰的JPG或PNG照片；仍可手工录入。',
   OCR_UNAVAILABLE: 'AI服务暂时不可用，本次不会自动重试，请手工核对或稍后重新识别。',
   OCR_INVALID_RESULT: 'AI未能可靠识别，请重拍清晰照片，或手工输入。',
   PHOTO_INVALID: '识别照片格式或大小无效，请重新拍照。'
@@ -241,12 +248,15 @@ export function createCloudClient(options = {}) {
     if (!PHOTO_TYPES.has(blob.type) || !blob.size || blob.size > MAX_PHOTO) throw fail('INVALID_PHOTO', '云端原照片格式或大小不符合要求。');
     return blob;
   }
-  async function ocrStatus(workspaceId) {
+  async function ocrStatus(workspaceId, checkProtocol = false) {
     if(ocrProvider!=='Anthropic')throw fail('OCR_PAGE_OUTDATED',SAFE_ERRORS.OCR_PAGE_OUTDATED);
     identifier(workspaceId);
-    const data=await jsonRequest(`/functions/v1/meter-ocr?workspaceId=${workspaceId}`);
+    if(typeof checkProtocol!=='boolean')throw fail('BAD_RESPONSE','AI服务检查选项无效。');
+    const data=await jsonRequest(`/functions/v1/meter-ocr?workspaceId=${workspaceId}${checkProtocol?'&check=protocol':''}`);
     if(data?.workspaceId!==workspaceId||typeof data.available!=='boolean'||data.provider!=='Anthropic'||data.dailyLimit!==12)
       throw fail('BAD_RESPONSE','无法确认AI识别服务状态，仍可手工录入。');
+    if(checkProtocol&&(data.available!==true||data.protocolChecked!==true||data.generationVerified!==false||JSON.stringify(data.modelsChecked)!==JSON.stringify(['claude-haiku-5-5','claude-sonnet-5-5'])))
+      throw fail('BAD_RESPONSE','服务预检尚未确认，请刷新页面；仍可手工录入。');
     return data;
   }
   async function recognizeMeters(workspaceId,expectedRevision,photos) {

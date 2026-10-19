@@ -91,9 +91,9 @@ export function createCloudWorkspace(client) {
       try {const blob=await client.getPhoto(id,photoId);guard(ticket);return blob;}
       catch(error) {guard(ticket);throw error;}
     },
-    async ocrStatus() {
+    async ocrStatus(checkProtocol = false) {
       const {ticket,id}=selected();
-      try {const result=await client.ocrStatus(id);guard(ticket);return result;}
+      try {const result=await client.ocrStatus(id,checkProtocol);guard(ticket);return result;}
       catch(error){guard(ticket);throw error;}
     },
     async recognizeMeters(photos) {
