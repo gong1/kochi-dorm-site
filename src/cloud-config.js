@@ -1,5 +1,5 @@
 // Public browser configuration only. Independent dorm project; Auth, membership and RLS protect all business data.
-export const CLOUD_CONFIG = Object.freeze({meterTasksEnabled: false, supabaseUrl: 'https://sysoqtygjmzohwrivipi.supabase.co', supabasePublishableKey: 'sb_publishable_eAmWYq7gDStVo1h0msErag_7DVAi_xY'});
+export const CLOUD_CONFIG = Object.freeze({meterTasksEnabled: true, supabaseUrl: 'https://sysoqtygjmzohwrivipi.supabase.co', supabasePublishableKey: 'sb_publishable_eAmWYq7gDStVo1h0msErag_7DVAi_xY'});
 
 export function validateCloudConfig(config = CLOUD_CONFIG) {
   if (!config || typeof config !== 'object') throw new TypeError('云端配置无效。');
