@@ -23,9 +23,9 @@ function record(value,id) {
 
 // Selection epochs invalidate every late completion, including failed requests.
 export function createCloudWorkspace(client) {
-  let epoch=0,user=null,allowed=new Map(),current=null,blocked=false,saving=false;
+  let epoch=0,user=null,allowed=new Map(),current=null,blocked=false,saving=false,recognizing=false;
   const guard=ticket=>{if(ticket!==epoch) throw fail('STALE_OPERATION','页面已切换，请重新打开云端宿舍。');};
-  const clear=()=>{epoch++;current=null;blocked=false;saving=false;};
+  const clear=()=>{epoch++;current=null;blocked=false;saving=false;recognizing=false;};
   const leave=()=>{clear();allowed=new Map();user=null;};
   const selected=()=>{
     if(!current) throw fail('NO_WORKSPACE','请先选择并读取云端宿舍。');
@@ -63,6 +63,7 @@ export function createCloudWorkspace(client) {
       const {ticket,id,revision}=selected();
       if(blocked) throw fail('RELOAD_REQUIRED','保存结果需要核对，请重新读取云端数据后再修改。');
       if(saving) throw fail('SAVE_IN_PROGRESS','上一次保存仍在处理中。');
+      if(recognizing) throw fail('OCR_IN_PROGRESS','AI识别仍在处理中，请核对识别结果后再保存。');
       if(expectedRevision!==revision) {
         blocked=true;throw fail('REVISION_CONFLICT','云端版本已变化，请重新读取后再修改。');
       }
@@ -89,6 +90,23 @@ export function createCloudWorkspace(client) {
       const {ticket,id}=selected();
       try {const blob=await client.getPhoto(id,photoId);guard(ticket);return blob;}
       catch(error) {guard(ticket);throw error;}
+    },
+    async ocrStatus() {
+      const {ticket,id}=selected();
+      try {const result=await client.ocrStatus(id);guard(ticket);return result;}
+      catch(error){guard(ticket);throw error;}
+    },
+    async recognizeMeters(photos) {
+      const {ticket,id,revision}=selected();
+      if(blocked)throw fail('RELOAD_REQUIRED','请先刷新云端，核对当前版本后再识别。');
+      if(saving||recognizing)throw fail('OCR_IN_PROGRESS','上一次保存或识别仍在处理中。');
+      recognizing=true;
+      try {
+        const result=await client.recognizeMeters(id,revision,photos);guard(ticket);
+        if(current.revision!==revision||result.workspaceId!==id||result.revision!==revision)throw fail('STALE_OPERATION','宿舍版本已变化，请重新核对照片。');
+        return result;
+      }catch(error){guard(ticket);if(error.code==='REVISION_CONFLICT')blocked=true;throw error;}
+      finally {if(ticket===epoch)recognizing=false;}
     },
     leave,
     async signOut() {leave();await client.signOut();},

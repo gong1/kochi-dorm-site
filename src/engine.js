@@ -78,9 +78,35 @@ export function rateFor(rates,month) {
   if (!applicable.length) throw new Error('该月还没有生效的合同费率，请在合同设置中添加。');
   validateRate(applicable[0]); return applicable[0];
 }
+const OCR_UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function exactKeys(value,keys) {
+  return value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(k=>Object.hasOwn(value,k));
+}
+// Recognition is an untrusted suggestion, stored separately from the confirmed reading.
+export function validateMeterResult(result,kind) {
+  const invalid=()=>{throw new Error('AI识别结果无效，请对照原照片手工核对。');};
+  if(!['electric','gas'].includes(kind)||!exactKeys(result,['meterType','value','display','unit','meterNumber','warnings','status']))invalid();
+  if(!['electric','gas','unknown'].includes(result.meterType)||!['ok','uncertain','wrong_meter'].includes(result.status)||
+    ![null,'kWh','m3'].includes(result.unit)||typeof result.display!=='string'||result.display.length>80||
+    !(result.meterNumber===null||typeof result.meterNumber==='string'&&result.meterNumber.length<=80)||
+    !Array.isArray(result.warnings)||result.warnings.length>6||result.warnings.some(w=>typeof w!=='string'||!w||w.length>160))invalid();
+  if(result.status==='ok') {
+    if(result.meterType!==kind||result.unit!==(kind==='electric'?'kWh':'m3')||typeof result.value!=='number'||
+      !Number.isFinite(result.value)||result.value<0||result.value>1e9||result.warnings.length)invalid();
+  } else if(result.value!==null)invalid();
+  return result;
+}
+export function validateMeterRecognition(metadata,kind) {
+  if(!exactKeys(metadata,['version','provider','model','recognizedAt','requestId','result'])||metadata.version!==1||metadata.provider!=='OpenAI'||
+    typeof metadata.model!=='string'||!metadata.model||metadata.model.length>100||typeof metadata.requestId!=='string'||!OCR_UUID.test(metadata.requestId)||
+    typeof metadata.recognizedAt!=='string'||!Number.isFinite(Date.parse(metadata.recognizedAt))||new Date(metadata.recognizedAt).toISOString()!==metadata.recognizedAt)
+    throw new Error('AI识别记录无效，请重新核对照片。');
+  validateMeterResult(metadata.result,kind);return metadata;
+}
 export function validateReading(r) {
   if (!validDate(r.period) || !validDate(r.actual)) throw new Error('请填写读数所属日期和实际抄表日期。');
   amount(r.electric,'电表读数'); amount(r.gas,'燃气表读数');
+  for(const kind of ['electric','gas'])if(r[kind+'Photo']?.recognition!==undefined)validateMeterRecognition(r[kind+'Photo'].recognition,kind);
   if (!r.confirmed) throw new Error('请核对并确认两项表数。');
   if (r.actual!==r.period && !r.override) throw new Error('实际抄表日与归属日期不同，请明确确认按归属日期处理。');
 }

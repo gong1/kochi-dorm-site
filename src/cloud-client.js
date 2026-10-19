@@ -1,4 +1,5 @@
 import {CLOUD_CONFIG, validateCloudConfig} from './cloud-config.js';
+import {validateMeterRecognition} from './engine.js';
 
 const PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -10,7 +11,14 @@ const SAFE_ERRORS = Object.freeze({
   STATE_INVALID: '云端资料未通过检查，请核对填写内容。',
   PHOTO_MISSING: '原照片尚未完整上传，资料未保存。请核对照片后重试。',
   BILL_FROZEN: '已确认月结的计算依据不能改写，请刷新核对。',
-  PAYMENT_APPEND_ONLY: '已有收款不能删除或改写，请刷新核对。'
+  PAYMENT_APPEND_ONLY: '已有收款不能删除或改写，请刷新核对。',
+  OCR_NOT_CONFIGURED: 'AI识别尚未开通，请先手工输入；管理方需要配置服务器API密钥。',
+  OCR_RATE_LIMITED: '识别次数已达到限制，请稍后再试，或手工录入。',
+  OCR_PROVIDER_AUTH: 'AI服务密钥不可用，请联系管理方检查服务器配置。',
+  OCR_PROVIDER_LIMIT: 'AI服务额度不足或暂时限流，请检查API账户，仍可手工录入。',
+  OCR_UNAVAILABLE: 'AI服务暂时不可用，本次不会自动重试，请手工核对或稍后重新识别。',
+  OCR_INVALID_RESULT: 'AI未能可靠识别，请重拍清晰照片，或手工输入。',
+  PHOTO_INVALID: '识别照片格式或大小无效，请重新拍照。'
 });
 
 export class CloudError extends Error {
@@ -32,7 +40,7 @@ export function createCloudClient(options = {}) {
     const unavailable = async () => {throw fail('CLOUD_NOT_CONFIGURED', '独立云端项目尚未配置，请先使用示例或本机数据。');};
     return Object.freeze({configured: false, signIn: unavailable, getUser: unavailable, refreshSession: unavailable,
       signOut: async () => ({remoteRevoked: true}), hasSession: () => false, getSessionInfo: () => null,
-      listWorkspaces: unavailable, loadWorkspace: unavailable, saveWorkspace: unavailable, uploadPhoto: unavailable, getPhoto: unavailable});
+      listWorkspaces: unavailable, loadWorkspace: unavailable, saveWorkspace: unavailable, uploadPhoto: unavailable, getPhoto: unavailable, ocrStatus: unavailable, recognizeMeters: unavailable});
   }
   if (typeof fetchImpl !== 'function') throw new TypeError('当前浏览器不支持云端连接。');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new TypeError('请求时限无效。');
@@ -62,11 +70,11 @@ export function createCloudClient(options = {}) {
     else clearStored();
   } catch {clearStored();}
 
-  async function send(path, {method = 'GET', body, token, contentType, extraHeaders, captured = generation, mutation = false} = {}) {
+  async function send(path, {method = 'GET', body, token, contentType, extraHeaders, captured = generation, mutation = false, deadlineMs = timeoutMs} = {}) {
     check(captured);
     const controller = new AbortController(); pending.add(controller);
     let timer;
-    const timedOut = new Promise((_, reject) => {timer = setTimeout(() => {controller.abort(); reject(fail('TIMEOUT', '云端连接超时，请稍后重试。'));}, timeoutMs);});
+    const timedOut = new Promise((_, reject) => {timer = setTimeout(() => {controller.abort(); reject(fail('TIMEOUT', '云端连接超时，请稍后重试。'));}, deadlineMs);});
     try {
       const headers = {'apikey': settings.supabasePublishableKey, ...extraHeaders};
       if (token) headers.Authorization = `Bearer ${token}`;
@@ -105,7 +113,7 @@ export function createCloudClient(options = {}) {
     return fail('REQUEST_REJECTED', '云端未接受本次操作，请核对资料后重试。');
   }
   async function serverError(response, captured, mutation) {
-    if ([400, 403, 404, 409].includes(response.status)) {
+    if ([400, 403, 404, 409, 422, 429, 502, 503].includes(response.status)) {
       try {
         const code = (await parse(response, captured))?.error?.code;
         if (Object.hasOwn(SAFE_ERRORS, code)) return fail(code, SAFE_ERRORS[code]);
@@ -137,6 +145,7 @@ export function createCloudClient(options = {}) {
     let response = await send(path, {...options, token, captured});
     if (response.status === 401) {
       check(captured);
+      if(options.noRetry){invalidate();throw expired();}
       if (session?.access_token === token) {
         try {await refreshSession();} catch (error) {
           if (options.mutation && !['SESSION_CHANGED', 'AUTH_EXPIRED'].includes(error.code)) throw uncertain();
@@ -229,5 +238,38 @@ export function createCloudClient(options = {}) {
     if (!PHOTO_TYPES.has(blob.type) || !blob.size || blob.size > MAX_PHOTO) throw fail('INVALID_PHOTO', '云端原照片格式或大小不符合要求。');
     return blob;
   }
-  return Object.freeze({configured: true, signIn, getUser, refreshSession, signOut, hasSession: () => !!session, getSessionInfo, listWorkspaces, loadWorkspace, saveWorkspace, uploadPhoto, getPhoto});
+  async function ocrStatus(workspaceId) {
+    identifier(workspaceId);
+    const data=await jsonRequest(`/functions/v1/meter-ocr?workspaceId=${workspaceId}`);
+    if(data?.workspaceId!==workspaceId||typeof data.available!=='boolean'||data.provider!=='OpenAI'||data.dailyLimit!==12)
+      throw fail('BAD_RESPONSE','无法确认AI识别服务状态，仍可手工录入。');
+    return data;
+  }
+  async function recognizeMeters(workspaceId,expectedRevision,photos) {
+    identifier(workspaceId);
+    if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0||!Array.isArray(photos)||photos.length!==2||
+      new Set(photos.map(p=>p?.kind)).size!==2||photos.some(p=>!['electric','gas'].includes(p?.kind)||
+        !['image/jpeg','image/png','image/webp'].includes(p.mimeType)||typeof p.data!=='string'||!p.data.length||p.data.length>2097152))
+      throw fail('INVALID_PHOTO','请分别选择电表和燃气表两张清晰照片。');
+    const captured=generation;
+    let data;
+    try {
+      data=await jsonRequest('/functions/v1/meter-ocr',{method:'POST',contentType:'application/json',
+        body:JSON.stringify({workspaceId,expectedRevision,photos:photos.map(({kind,mimeType,data})=>({kind,mimeType,data}))}),deadlineMs:60000,noRetry:true});
+    } catch(error) {
+      check(captured);
+      if(['TIMEOUT','NETWORK_ERROR','SERVER_ERROR'].includes(error.code))throw fail('OCR_UNAVAILABLE',SAFE_ERRORS.OCR_UNAVAILABLE);
+      throw error;
+    }
+    check(captured);
+    if(data?.workspaceId!==workspaceId||data.revision!==expectedRevision||!data.readings||
+      Object.keys(data.readings).length!==2||!['electric','gas'].every(k=>Object.hasOwn(data.readings,k)))
+      throw fail('BAD_RESPONSE','识别结果不属于当前宿舍或版本，请重新读取后核对。');
+    try {
+      for(const kind of ['electric','gas'])validateMeterRecognition({version:1,provider:'OpenAI',model:data.model,
+        recognizedAt:data.recognizedAt,requestId:data.requestId,result:data.readings[kind]},kind);
+    }catch {throw fail('OCR_INVALID_RESULT',SAFE_ERRORS.OCR_INVALID_RESULT);}
+    return data;
+  }
+  return Object.freeze({configured: true, signIn, getUser, refreshSession, signOut, hasSession: () => !!session, getSessionInfo, listWorkspaces, loadWorkspace, saveWorkspace, uploadPhoto, getPhoto, ocrStatus, recognizeMeters});
 }
