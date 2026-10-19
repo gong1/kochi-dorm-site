@@ -6,24 +6,31 @@ import {CLOUD_CONFIG} from './cloud-config.js';
 import {createCloudWorkspace} from './cloud-workspace.js';
 import {legacyPaidFor,recordLegacyPayment,assertMonthOutsideLegacy,legacyNextMonth,confirmLegacyOccupancy} from './history.js';
 import {createMeterOcrSession,prepareMeterPhoto,usableMeterResult,METER_KINDS} from './meter-ocr.js';
+import {validateIntervalState} from './intervals.js';
+import {accountSummary,recordAccountPayment} from './accounts.js';
+import {homeView,peopleView,accountsView,settingsView} from './simple-view.js';
+import {validateMeterProfiles,verifyMeterNumber,meterMatchLabel} from './meters.js';
+import {previewMovement,billingCheckpoint,validateMovementEvents,movementReadingForDate} from './movements.js';
+import {startMeterTaskPage} from './meter-task-page.js';
 
 const app=document.querySelector('#app');
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icons={home:'M3 10 12 3l9 7v11h-6v-7H9v7H3Z',people:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m14-13a4 4 0 0 1 0 8m6 5v-2a4 4 0 0 0-3-3M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0',meter:'M4 7h16v14H4ZM8 3h8v4H8Zm0 8h8m-8 5h2m4 0h2',settings:'M4 6h16M4 12h16M4 18h16M8 3v6m8 0v6m-6 0v6',wallet:'M3 6h17v15H3Zm0 0V3h14v3m-1 6h5v5h-5Z',box:'M3 7 12 3l9 4v14H3Zm0 0 9 4 9-4M12 11v10'};
 const icon=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name]||icons.home}"/></svg>`;
-const pages=[['dashboard','home','月结工作台','从抄表到结算，每月清楚一点。'],['residents','people','住户与入住','按实际入住日期，计算每一天。'],['readings','meter','抄表记录','拍电表和气表两张照片，核对后保存。'],['rates','settings','合同费率','按生效月份管理，保留历史依据。'],['payments','wallet','月度收款','每笔实际到账，都有清楚的记录。'],['history','box','历史结算','保留已确认总账，逐笔记录实际收款。'],['backup','box','本机数据','备份住户、结算和原始抄表照片。']];
-const cloud=createCloudClient({config:CLOUD_CONFIG,ocrProvider:'Anthropic'}),cloudWorkspace=createCloudWorkspace(cloud);
+const pages=[['people','people','人员进出','入住或搬出，按步骤办清楚。'],['accounts','wallet','个人账本','看每个人欠多少，实际到账后登记。'],['settings','settings','设置与记录','抄表指引、费率与备份。'],['monthly','box','原有月结明细','保留已确认月结与计算依据。'],['dashboard','home','首页','在住、欠款和待办，一眼看清。'],['residents','people','住户与入住','按实际入住日期，计算每一天。'],['readings','meter','拍表','按位置指引拍电表和气表，核对后交给管理方。'],['rates','settings','合同费率','按生效月份管理，保留历史依据。'],['payments','wallet','月度收款','每笔实际到账，都有清楚的记录。'],['history','box','历史结算','保留已确认总账，逐笔记录实际收款。'],['backup','box','本机数据','备份住户、结算和原始抄表照片。']];
+const workerMode=location.hash.startsWith('#/task');
+const cloud=createCloudClient({config:workerMode?{}:CLOUD_CONFIG,ocrProvider:'Anthropic'}),cloudWorkspace=createCloudWorkspace(cloud);
 let state,revision=0,month,editing=null,mode='cloud',busy=false,urls=[],renderToken=0,viewEpoch=0;
-let legacySelectedId=null,readingOcr=null;
+let legacySelectedId=null,readingOcr=null,movement=null,accountSelected=null,ownerTasks=[],taskReview=null,taskLink='';
 let cloudUser=null,cloudChoices=[],cloudSelected=null,cloudSavedAt=null,cloudLoading=false,cloudError='';
 const cloudEnabled=Boolean(CLOUD_CONFIG.supabaseUrl&&CLOUD_CONFIG.supabasePublishableKey);
 const modeName=()=>mode==='cloud'?'云端数据':mode==='demo'?'示例数据':'本机数据';
 const pageLabel=(key,label)=>mode==='cloud'&&key==='backup'?'数据与备份':label;
-function clearPrivateView(){readingOcr?.session.clear();readingOcr=null;legacySelectedId=null;clearTimeout(notice.timer);const noticeEl=document.querySelector('#notice');noticeEl.textContent='';noticeEl.className='';urls.forEach(URL.revokeObjectURL);urls=[];renderToken++;document.querySelector('#print-root').replaceChildren();}
+function clearPrivateView(){readingOcr?.session.clear();readingOcr=null;legacySelectedId=null;movement=null;accountSelected=null;ownerTasks=[];taskReview=null;taskLink='';clearTimeout(notice.timer);const noticeEl=document.querySelector('#notice');noticeEl.textContent='';noticeEl.className='';urls.forEach(URL.revokeObjectURL);urls=[];renderToken++;document.querySelector('#print-root').replaceChildren();}
 function readPhoto(key){return mode==='cloud'?cloudWorkspace.photo(key):getPhoto(key);}
 
 // The shared website always opens the authenticated cloud entry; demo/local require an explicit choice.
-const current=()=>pages.find(p=>p[0]===location.hash.slice(2))||pages[0];
+const current=()=>pages.find(p=>p[0]===location.hash.slice(2))||pages.find(p=>p[0]==='dashboard');
 const bill=()=>state?.bills.find(b=>b.month===month);
 const legacySettlement=()=>state?.legacySettlements?.find(s=>s.id===legacySelectedId)||state?.legacySettlements?.[0];
 function workspaceMonth(value){const first=legacyNextMonth(value),suggested=suggestedMonth(value);return first&&suggested<first?first:suggested;}
@@ -63,7 +70,7 @@ async function task(fn){
 async function commit(next,photos=[],expectedEpoch=viewEpoch){
   checkView(expectedEpoch);
   if(next.mode!==mode)throw new Error('数据区不一致，请刷新后重试。');
-  validateState(next);const epoch=expectedEpoch;
+  validateState(next);validateIntervalState(next);validateMeterProfiles(next.meterProfiles);validateMovementEvents(next);const epoch=expectedEpoch;
   if(mode==='cloud'){
     const saved=await cloudWorkspace.save(next,revision,photos);checkView(epoch);
     state=saved.state;revision=saved.revision;cloudSavedAt=saved.savedAt;
@@ -119,7 +126,7 @@ function renderCloudGate(){
   else if(cloudUser)body=note('当前账号尚未开通宿舍访问。请由管理方添加成员权限后，再刷新连接。','warning');
   else body='<form id="cloud-login-form">'+field('管理方邮箱','email','','email','required autocomplete="username"')+field('密码','password','','password','required autocomplete="current-password"')+'<button type="submit" class="button primary">登录宿舍云端</button></form><p class="muted">仅已开通的管理方账号可访问，不提供公开注册。</p>';
   const account=cloud.hasSession()?'<button class="text-button" data-action="cloud-refresh">刷新连接</button><button class="text-button" data-action="cloud-sign-out">退出登录</button>':'';
-  app.innerHTML='<main class="cloud-gate" id="main"><section class="panel cloud-login"><a class="brand" href="#/dashboard"><span class="brand-mark">'+icon('home')+'</span><span>Kochi<span class="brand-sub">宿舍月结</span></span></a><div class="eyebrow">KOCHI DORM / CLOUD</div><h1>宿舍管理登录</h1><p>正式管理入口。登录后选择宿舍，在你的设备之间使用同一份记录。</p>'+ (cloudError?'<div class="callout warning" role="alert">'+esc(cloudError)+'</div>':'')+body+'<div class="cloud-gate-actions">'+account+'<details class="other-data"><summary>示例与本机数据入口</summary><div><button class="text-button" data-action="open-demo">打开虚构示例</button><button class="text-button" data-action="open-local">打开本机数据</button></div></details></div><small>示例、本机与云端数据相互独立。拍表识别仅在云端登录后可用，采用后仍须人工核对。</small></section></main>';
+  app.innerHTML='<main class="cloud-gate" id="main"><section class="panel cloud-login"><a class="brand" href="#/dashboard"><span class="brand-mark">'+icon('home')+'</span><span>Kochi<span class="brand-sub">宿舍管理</span></span></a><div class="eyebrow">KOCHI DORM / CLOUD</div><h1>宿舍管理登录</h1><p>正式管理入口。登录后选择宿舍，在你的设备之间使用同一份记录。</p>'+ (cloudError?'<div class="callout warning" role="alert">'+esc(cloudError)+'</div>':'')+body+'<div class="cloud-gate-actions">'+account+'<details class="other-data"><summary>示例与本机数据入口</summary><div><button class="text-button" data-action="open-demo">打开虚构示例</button><button class="text-button" data-action="open-local">打开本机数据</button></div></details></div><small>示例、本机与云端数据相互独立。拍表识别仅在云端登录后可用，采用后仍须人工核对。</small></section></main>';
 }
 function displayResult(){try{assertMonthOutsideLegacy(state,month);if(state.legacySettlements?.length&&!state.legacyOccupancyReviewedAt)throw new Error('历史人员当前入住状态尚待复核，请先在住户与入住核对并确认。');const b=bill();if(b)return {result:b.result,confirmed:true};return {result:calculateMonth({...state,month}),confirmed:false};}catch(e){return {error:e.message};}}
 function monthControl(){const first=legacyNextMonth(state);return `<div class="month-picker"><button class="icon-button" data-action="prev" aria-label="上一个月" ${first&&month<=first?'disabled':''}>‹</button><label><span class="sr-only">结算月份</span><input id="month" type="month" value="${month}" ${first?`min="${first}"`:''} aria-label="结算月份"></label><button class="icon-button" data-action="next" aria-label="下一个月">›</button></div>`;}
@@ -128,10 +135,54 @@ function render(){
   if(mode==='cloud'&&!state){renderCloudGate();return;}
   urls.forEach(URL.revokeObjectURL);urls=[];const token=++renderToken;
   const [view,,baseTitle,subtitle]=current(),title=pageLabel(view,baseTitle);
-  app.innerHTML=`<a class="skip" href="#main">跳到主要内容</a><aside class="sidebar"><a class="brand" href="#/dashboard"><span class="brand-mark">${icon('home')}</span><span>Kochi<span class="brand-sub">宿舍月结</span></span></a><div class="workspace-label">${mode==='cloud'?'住宿管理 / 云端':'住宿管理 / 本机预览'}</div><nav aria-label="主要导航">${pages.map(([key,i,label])=>`<a href="#/${key}" class="nav-item ${view===key?'active':''}" ${view===key?'aria-current="page"':''}>${icon(i)}<span>${pageLabel(key,label)}</span>${key==='dashboard'?'<span class="nav-dot"></span>':''}</a>`).join('')}</nav><div class="sidebar-bottom"><div class="local-dot"></div><div>${mode==='cloud'?'<strong>已连接宿舍云端</strong><p>定期导出完整备份</p>':'<strong>数据仅存本机</strong><p>未连接云端数据库</p>'}</div></div></aside><div class="workspace"><header class="topbar"><span class="breadcrumb">Kochi 宿舍 <span>/</span> ${title}</span><div class="top-actions">${badge(modeName(),mode==='demo'?'amber':'green')}${mode!=='cloud'?'<button class="text-button" data-action="switch-mode">切换本机 / 示例</button>':''}${mode==='cloud'?'<button class="text-button" data-action="cloud-refresh">刷新云端</button>'+(cloudChoices.length>1?'<button class="text-button" data-action="open-cloud">切换宿舍</button>':'')+'<button class="text-button" data-action="cloud-sign-out">退出登录</button>':'<button class="text-button" data-action="open-cloud">返回正式云端</button>'}<span class="avatar" aria-label="管理方">宿</span></div></header><main id="main" tabindex="-1"><div class="page-heading"><div><div class="eyebrow">KOCHI DORM / ${mode==='cloud'?'CLOUD':mode==='demo'?'DEMO':'LOCAL'}</div><h1>${title}</h1><p>${subtitle}</p></div>${['dashboard','payments'].includes(view)?monthControl():''}</div><div class="mode-banner ${mode==='demo'?'demo':'local'}"><span>${mode==='demo'?'<strong>示例演练中</strong> · 人员和表数均为虚构，仅用于体验完整流程。':mode==='cloud'?'<strong>云端数据区</strong> · '+esc(cloudSelected?.name||'宿舍')+'；修改保存后可在其他设备登录读取。':'<strong>本机数据区</strong> · 仅保存在当前浏览器，不会自动同步到其他设备。'}</span><a href="#/backup">备份与数据说明 ↗</a></div>${({dashboard:dashboard,residents:residents,readings:readings,rates:rates,payments:payments,history:history,backup:backup}[view])()}<footer>KOCHI DORM <span>${mode==='cloud'?'云端记录':'本机预览'} · 费用按已确认规则估分 · 定期导出备份</span></footer></main></div>`;
-  if(view==='readings')setupMeterOcr(token);
+  app.innerHTML=`<a class="skip" href="#main">跳到主要内容</a><aside class="sidebar"><a class="brand" href="#/dashboard"><span class="brand-mark">${icon('home')}</span><span>Kochi<span class="brand-sub">宿舍管理</span></span></a><div class="workspace-label">${mode==='cloud'?'住宿管理 / 云端':'住宿管理 / 本机预览'}</div><nav aria-label="主要导航">${['dashboard','people','readings','accounts'].map(key=>pages.find(p=>p[0]===key)).map(([key,i,label])=>`<a href="#/${key}" class="nav-item ${view===key?'active':''}" ${view===key?'aria-current="page"':''}>${icon(i)}<span>${pageLabel(key,label)}</span>${key==='dashboard'?'<span class="nav-dot"></span>':''}</a>`).join('')}</nav><div class="sidebar-bottom"><div class="local-dot"></div><div>${mode==='cloud'?'<strong>已连接宿舍云端</strong><p>定期导出完整备份</p>':'<strong>数据仅存本机</strong><p>未连接云端数据库</p>'}</div></div></aside><div class="workspace"><header class="topbar"><span class="breadcrumb">Kochi 宿舍 <span>/</span> ${title}</span><div class="top-actions"><a class="text-button" href="#/settings">设置</a>${badge(modeName(),mode==='demo'?'amber':'green')}${mode!=='cloud'?'<button class="text-button" data-action="switch-mode">切换本机 / 示例</button>':''}${mode==='cloud'?'<button class="text-button" data-action="cloud-refresh">刷新云端</button>'+(cloudChoices.length>1?'<button class="text-button" data-action="open-cloud">切换宿舍</button>':'')+'<button class="text-button" data-action="cloud-sign-out">退出登录</button>':'<button class="text-button" data-action="open-cloud">返回正式云端</button>'}<span class="avatar" aria-label="管理方">宿</span></div></header><main id="main" tabindex="-1"><div class="page-heading"><div><div class="eyebrow">KOCHI DORM / ${mode==='cloud'?'CLOUD':mode==='demo'?'DEMO':'LOCAL'}</div><h1>${title}</h1><p>${subtitle}</p></div>${['monthly','payments'].includes(view)?monthControl():''}</div><div class="mode-banner ${mode==='demo'?'demo':'local'}"><span>${mode==='demo'?'<strong>示例演练中</strong> · 人员和表数均为虚构，仅用于体验完整流程。':mode==='cloud'?'<strong>云端数据区</strong> · '+esc(cloudSelected?.name||'宿舍')+'；修改保存后可在其他设备登录读取。':'<strong>本机数据区</strong> · 仅保存在当前浏览器，不会自动同步到其他设备。'}</span><a href="#/backup">备份与数据说明 ↗</a></div>${({dashboard:()=>homeView(state),people:peoplePage,accounts:()=>accountsView(state,accountSelected),settings:()=>settingsView(state),monthly:dashboard,residents:peoplePage,readings:readingsPage,rates:rates,payments:payments,history:history,backup:backup}[view])()}<footer>KOCHI DORM <span>${mode==='cloud'?'云端记录':'本机预览'} · 费用按已确认规则估分 · 定期导出备份</span></footer></main></div>`;
+  if((view==='readings'||view==='people'&&movement?.stage==='reading')&&!taskReview)setupMeterOcr(token);
+  if(view==='readings'||view==='people'&&movement?.stage==='reading')setupOwnerTasks(token);
   for(const el of app.querySelectorAll('[data-photo]'))readPhoto(el.dataset.photo).then(blob=>{if(blob&&token===renderToken&&el.isConnected){const url=URL.createObjectURL(blob);urls.push(url);el.src=url;}else if(!blob&&token===renderToken&&el.isConnected){el.alt='原照片缺失，请检查备份';}}).catch(error=>{if(token!==renderToken||!el.isConnected)return;if(mode==='cloud'&&authGateCodes.has(error.code)){gateFailure(error);render();}else el.alt='照片读取失败，请刷新核对登录状态';});
 }
+function meterGuide(kind){
+ const p=state.meterProfiles?.[kind];return `<div class="meter-guide"><strong>${kind==='electric'?'电表':'气表'}在哪里？</strong><p>${esc(p?.location||'位置待管理方填写')}</p>${p?.hint?'<p>'+esc(p.hint)+'</p>':''}<strong>目标表号：${esc(p?.number||'待确认')}</strong><small>拍清表号、累计数字和单位。表号不匹配时不自动采用。</small></div>`;
+}
+function readingsPage(){
+ if(taskReview)return taskReviewView();
+ let html=readings();
+ html=html.replace('<div class="content-grid"><section class="panel">','<div class="content-grid simple-reading-grid"><details class="panel saved-readings"><summary>查看已保存的抄表记录</summary><section>');
+ html=html.replace('</section><section class="panel form-panel" id="editor">','</section></details><section class="panel form-panel" id="editor">');
+ if(movement?.stage==='reading')html=html.replace('保存已核对表数','下一步：核对全员费用');
+ return html+ownerTasksView();
+}
+function peoplePage(){
+ if(!movement||movement.stage==='form')return peopleView(state,{movement});
+ if(movement.stage==='reading'){
+  const same=movementReadingForDate(state,movement.date),cut=billingCheckpoint(state);
+  return `<section class="simple-panel"><div class="simple-step-title"><span>2 / 3</span><h2>${movement.kind==='out'?'搬出':'入住'}前，抄两张表</h2></div><p>进出日期：${esc(movement.date)} · ${esc(movement.name||'新住户')}</p>${cut&&movement.date<=cut.period?note('原有费用已算至 '+esc(cut.period)+'；本次保存真实进出与现场表数，不重复计算这段费用。'):''}${same?note('当天已有已确认表数，同一天多人进出共用这一次。')+'<button class="button primary" data-action="movement-use-reading">使用当天已确认表数继续</button>':''}<button class="text-button" data-action="movement-back">← 修改人员和日期</button></section>${same?'':readingsPage()}`;
+ }
+ const preview=movement.preview,next=preview.state,settled=(next.intervalBills||[]).find(b=>b.id===preview.settlementId),accounts=accountSummary(next),focus=accounts.find(a=>a.id===preview.personId);
+ const message=preview.reason==='baseline'?'这是起始抄表，建立基准，不产生之前的费用。':preview.reason==='covered'?'这个日期已在原有结算范围内，不重复收费。':preview.reason==='same-day'?'今天已结算过，本次共用表数，不再次计费。':'本次费用只算上一结算点之后，到本次抄表当天。';
+ return `<div class="simple-page"><section class="simple-panel"><div class="simple-step-title"><span>3 / 3</span><h2>核对这段费用</h2></div><p>${esc(movement.name||focus?.name)} · ${movement.kind==='out'?'搬出':'入住'} ${esc(movement.date)}</p>${note(message)}${settled?`<p>${esc(settled.coverageStart)} 至 ${esc(settled.coverageEnd)} · 电 ${esc(Number(settled.result.electricKwh.toFixed(4)))} kWh · 气 ${esc(Number(settled.result.gasM3.toFixed(4)))} m³</p><div class="table-scroll"><table><thead><tr><th>本段在住人员</th><th>这次新增费用</th><th>累计未收</th></tr></thead><tbody>${settled.result.rows.map(row=>`<tr><td>${esc(row.name)}</td><td>${euros(row.total)}</td><td>${row.id==='__owner'?'管理方承担':euros(accounts.find(a=>a.id===row.id)?.balanceCents||0)}</td></tr>`).join('')}</tbody></table></div><details><summary>查看费用明细与估算说明</summary>${settled.result.rows.map(row=>'<p><strong>'+esc(row.name)+'</strong> '+FEES.map(([k,l])=>esc(l)+' '+euros(row[k])).join(' · ')+'</p>').join('')}${settled.result.warnings.map(w=>'<p>'+esc(w)+'</p>').join('')}</details>`:''}${movement.kind==='out'&&focus?`<div class="simple-checkout-balance"><span>搬出时此人全部待收</span><strong>${euros(focus.balanceCents)}</strong><p>含原有未付费用。下一步登记真正收到的钱；办理搬出不会自动清零。</p></div>`:''}<form id="movement-confirm-form">${check('reviewed','我已核对人员、实际日期、两只表及本次全员费用。')}<div class="simple-actions"><button class="button primary" type="submit">${movement.kind==='out'?'确认结算与搬出，下一步收款':'确认结算与入住'}</button><button class="button secondary" type="button" data-action="movement-back">返回修改</button></div></form></section></div>`;
+}
+function ownerTasksView(){
+ if(mode!=='cloud')return '<section class="simple-panel"><h2>请住户拍表</h2><p>代抄任务仅在正式云端可用。当前是示例或本机数据区。</p></section>';
+ if(!CLOUD_CONFIG.meterTasksEnabled)return '<section class="simple-panel"><details><summary>让住户帮忙拍表</summary><p>受限拍表链接已准备，等待管理方确认开通。你仍可自行拍表或手工录入。</p></details></section>';
+ const ready=METER_KINDS.every(k=>state.meterProfiles?.[k]?.number?.trim()&&state.meterProfiles?.[k]?.location?.trim());
+ return `<section class="simple-panel"><details class="delegate-details"><summary>让住户帮忙拍表</summary><p>住户只看找表指引和表号；交回的资料由你核对，不会看到人员和欠款。</p>${!ready?'<p><a href="#/settings">先补齐两只表的表号和位置</a>，再生成限时链接。</p>':''}<button class="button secondary" data-action="task-create" ${ready?'':'disabled'}>创建24小时拍表链接</button>${taskLink?`<label class="field"><span>本次链接（请只发给拍表人）</span><input readonly value="${esc(taskLink)}"></label><p>复制此链接后只交给本次拍表人。你可以随时撤销；只允许提交一次。</p>`:''}<div class="owner-tasks" aria-live="polite"><p>正在读取任务…</p></div></details></section>`;
+}
+async function setupOwnerTasks(token){
+ const container=document.querySelector('.owner-tasks');if(!container||mode!=='cloud'||!CLOUD_CONFIG.meterTasksEnabled)return;
+ try{const result=await cloudWorkspace.meterTasks();if(token!==renderToken||!container.isConnected)return;ownerTasks=result.tasks;container.innerHTML=ownerTasks.length?ownerTasks.map(t=>`<article class="simple-task-row"><div><strong>${esc(t.date)} 抄表</strong><p>${esc({open:'等待拍表',submitted:'已提交，待你核对',adopted:'已采用',revoked:'已撤销',expired:'已过期'}[t.status]||'待刷新')}</p></div>${t.status==='submitted'?'<button class="button primary" data-action="task-review" data-id="'+esc(t.id)+'">核对资料</button>':''}${['open','submitted'].includes(t.status)?'<button class="text-button" data-action="task-revoke" data-id="'+esc(t.id)+'">撤销</button>':''}</article>`).join(''):'<p>还没有代抄任务。</p>';}
+ catch(error){if(token!==renderToken||!container.isConnected)return;container.textContent=error.code==='AUTH_REQUIRED'?'请重新登录后读取拍表任务。':error.message||'任务暂时未能读取，可继续自己拍表。';}
+}
+function taskReviewView(){
+ const t=taskReview,s=t.submission;if(!s)return '<p>待审核资料已变化，请刷新任务列表。</p>';
+ const needsNote=METER_KINDS.some(k=>s.serialCheck[k]!=='matched');
+ return `<section class="simple-panel"><button class="text-button" data-action="task-review-back">← 拍表</button><h2>核对住户交回的两张表</h2><p>实际抄表 ${esc(s.actualDate)}。资料尚未进入正式表数，不会自动收费。</p><div class="meter-capture-grid">${METER_KINDS.map(k=>'<article><h3>'+(k==='electric'?'电表':'气表')+' '+esc(s[k])+'</h3><p>'+esc(meterMatchLabel(s.serialCheck[k]))+'</p>'+photo(s.photos[k],k==='electric'?'代抄电表照片':'代抄气表照片')+'</article>').join('')}</div>${s.note?note(esc(s.note)):''}<form id="task-adopt-form">${field('用于结算的归属日期','period',s.actualDate,'date','required max="'+today()+'"')}${needsNote?note('有表号未自动核对通过。请对照原图和目标表号，填写复核说明。','warning'):''}${field('管理方复核说明'+(needsNote?'（必填）':'（可选）'),'reviewNote','','text','maxlength="500"'+(needsNote?' required':''))}${check('reviewed','我已核对两张原图、目标表号、累计读数和实际日期。')}<button class="button primary" type="submit">确认采用此次抄表</button></form></section>`;
+}
+function printAccount(personId,openDialog=true){
+ const account=accountSummary(state).find(a=>a.id===personId);if(!account)throw new Error('请先选择个人账本。');
+ document.querySelector('#print-root').innerHTML=`<section class="print-sheet"><div class="print-heading"><div>KOCHI DORM<h1>个人费用对账确认单</h1></div><div>${esc(today())}</div></div><h2>${esc(state.homeName)}</h2><p>住户：<strong>${esc(account.name)}</strong></p><table><thead><tr><th>截止日期 / 费用</th><th>应收</th><th>已收</th><th>未收</th></tr></thead><tbody>${account.charges.map(c=>`<tr><td>${esc(c.date)} · ${esc(c.title)}</td><td>${euros(c.dueCents)}</td><td>${euros(c.paidCents)}</td><td>${euros(c.balanceCents)}</td></tr>`).join('')}</tbody><tfoot><tr><th>累计</th><th>${euros(account.dueCents)}</th><th>${euros(account.paidCents)}</th><th>${euros(account.balanceCents)}</th></tr></tfoot></table><p><strong>本单确认费用与对账余额，签字不代表付款，也不是收款收据。</strong></p><div class="signatures"><div>住户签字：________________<br>日期：____________________</div><div>管理方签字：______________<br>日期：____________________</div></div></section>`;
+ if(openDialog)window.print();
+}
+
 function dashboard(){
   const {result:r,confirmed,error}=displayResult(),b=bill();
   const received=b?(b.payments||[]).reduce((n,p)=>n+p.cents,0):0;
@@ -171,7 +222,7 @@ function residents(){
 }
 function readings(){
   const r=state.readings.find(x=>x.id===editing)||{},locked=Boolean(state.legacySettlements?.some(item=>item.meter.end.id===r.id));
-  return `${locked?note('此记录是历史结算保留的期末基准。表数与日期已固定，可补充原照片和备注；照片仍需人工核对。'):''}${note('<strong>每次只需两张表：电表 + 气表。</strong> AI只提供读数建议，不填写日期、不自动保存或结算。实际抄表日与结算归属日请分别核对。')}<div class="content-grid"><section class="panel"><div class="panel-heading"><div><h2>已核对表数</h2><p>每个月结需要上月底和本月底两次读数</p></div>${badge(`${state.readings.length} 次记录`)}</div>${state.readings.length?`<div class="reading-list">${[...state.readings].sort((a,b)=>b.period.localeCompare(a.period)).map(x=>`<article class="reading-card"><div class="reading-title"><div><h3>归属 ${esc(x.period)}</h3><p>实际抄表 ${esc(x.actual)} ${x.actual!==x.period?'· 日期按约定归属':''}</p></div><button class="text-button" data-action="edit-reading" data-id="${esc(x.id)}">核对 / 编辑</button></div><div class="reading-values"><div><span>电表 · kWh</span><strong>${esc(x.electric)}</strong>${photo(x.electricPhoto,'电表原照片')}</div><div><span>燃气表 · m³</span><strong>${esc(x.gas)}</strong>${photo(x.gasPhoto,'燃气表原照片')}</div></div><small>${esc(x.note||'人工输入，已核对')} · ${x.electricPhoto||x.gasPhoto?(mode==='cloud'?'原照片保存在私有云端':'原照片仅保存在本机'):'未附照片'}</small></article>`).join('')}</div>`:empty('先添加基准表数','例如要结算9月，需要8月31日与9月30日的已确认读数。')}</section><section class="panel form-panel" id="editor"><h2>${r.id?'核对抄表记录':'添加抄表记录'}</h2><form id="reading-form" data-meter-locked="${locked?'true':'false'}"><input name="id" type="hidden" value="${esc(r.id||'')}">${field('结算归属日期','period',r.period||monthBounds(month).end,'date','required'+(locked?' readonly':''))}${field('实际抄表日期','actual',r.actual||today(),'date','required'+(locked?' readonly':''))}<div class="two-fields">${field('电表累计数（kWh）','electric',r.electric,'number','required min="0" max="1000000000" step="any" inputmode="decimal"'+(locked?' readonly':''))}${field('燃气累计数（m³）','gas',r.gas,'number','required min="0" max="1000000000" step="any" inputmode="decimal"'+(locked?' readonly':''))}</div><div class="meter-capture-grid">${['electric','gas'].map((key,i)=>`<div class="meter-capture-slot"><label class="field upload"><span><b class="meter-step">${i+1}</b> ${i?'气表 · m³':'电表 · kWh'}</span><span class="upload-label">＋ 拍${i?'气':'电'}表 / 选择照片</span><input type="file" name="${key}Photo" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment"><span class="upload-preview"></span></label>${photo(r[key+'Photo'],i?'已保存燃气照片':'已保存电表照片')}</div>`).join('')}</div>${locked?'':`<section class="meter-ocr" aria-label="AI抄表识别"><div class="meter-ocr-heading"><strong>AI识别两张表</strong>${badge('核对后才保存')}</div><p class="muted">${mode==='cloud'?'点击识别后，将本次选定的电表和气表照片副本发送给 Anthropic（Claude）提取读数。先快速识别，读不清时自动加强复核一次；按API用量计费。不会发送住户或费用；原图仅在点击保存后存入当前宿舍私有存储。':'AI识别仅云端登录后可用。当前照片仅在点击保存后存入本机浏览器，仍可手工输入和核对。'}</p><button type="button" class="button secondary" data-action="meter-ocr" disabled>AI识别两张表</button>${mode==='cloud'?'<button type="button" class="text-button" data-action="meter-ocr-check">检查AI服务（不传照片）</button>':''}<p class="meter-ocr-status" role="status" aria-live="polite">${mode==='cloud'?'正在检查AI识别服务…':'AI识别仅云端登录后可用，仍可手工录入。'}</p><div class="meter-ocr-results"></div></section>`}<small class="muted">支持 JPG / PNG / WebP / GIF，每张最多 8 MB。保存原图与文件时间；文件时间不代表已验证的拍摄日期。</small>${field('备注（可选）','note',r.note,'text','maxlength="300" placeholder="如：已与原照片核对"')}${locked?(r.override?'<input type="hidden" name="override" value="1"><p class="muted">历史实际抄表日与归属日不同，按已确认归属保留，不另估日期差额。</p>':''):check('override','实际抄表日不同于归属日时，我明确同意按归属日结算（不补估差额）。',r.override)}${check('confirmed','我已人工核对电、气两项累计表数。',false)}<div class="form-actions"><button type="submit" class="button primary">保存已核对表数</button>${r.id?'<button type="button" class="button secondary" data-action="cancel-edit">取消</button>':''}</div></form></section></div>`;
+  return `${locked?note('此记录是历史结算保留的期末基准。表数与日期已固定，可补充原照片和备注；照片仍需人工核对。'):''}${note('<strong>每次只需两张表：电表 + 气表。</strong> 拍清表号、数字和单位；识别后人工核对再保存。AI不会自动结算。')}<div class="content-grid"><section class="panel"><div class="panel-heading"><div><h2>已核对表数</h2><p>每个月结需要上月底和本月底两次读数</p></div>${badge(`${state.readings.length} 次记录`)}</div>${state.readings.length?`<div class="reading-list">${[...state.readings].sort((a,b)=>b.period.localeCompare(a.period)).map(x=>`<article class="reading-card"><div class="reading-title"><div><h3>归属 ${esc(x.period)}</h3><p>实际抄表 ${esc(x.actual)} ${x.actual!==x.period?'· 日期按约定归属':''}</p></div><button class="text-button" data-action="edit-reading" data-id="${esc(x.id)}">核对 / 编辑</button></div><div class="reading-values"><div><span>电表 · kWh</span><strong>${esc(x.electric)}</strong>${photo(x.electricPhoto,'电表原照片')}</div><div><span>燃气表 · m³</span><strong>${esc(x.gas)}</strong>${photo(x.gasPhoto,'燃气表原照片')}</div></div><small>${esc(x.note||'人工输入，已核对')} · ${x.electricPhoto||x.gasPhoto?(mode==='cloud'?'原照片保存在私有云端':'原照片仅保存在本机'):'未附照片'}</small></article>`).join('')}</div>`:empty('先添加基准表数','例如要结算9月，需要8月31日与9月30日的已确认读数。')}</section><section class="panel form-panel" id="editor"><h2>${r.id?'核对抄表记录':'添加抄表记录'}</h2><form id="reading-form" data-meter-locked="${locked?'true':'false'}"><input name="id" type="hidden" value="${esc(r.id||'')}">${r.id?field('结算归属日期','period',r.period,'date','required'+(locked?' readonly':'')):'<input type="hidden" name="period" value="'+esc(movement?.date||today())+'">'}${field(r.id?'实际抄表日期':'本次抄表日期','actual',r.actual||movement?.date||today(),'date','required'+(locked?' readonly':''))}<div class="meter-capture-grid">${['electric','gas'].map((key,i)=>`<div class="meter-capture-slot">${meterGuide(key)}<label class="field upload"><span><b class="meter-step">${i+1}</b> ${i?'气表 · m³':'电表 · kWh'}</span><span class="upload-label">＋ 拍${i?'气':'电'}表 / 选择照片</span><input type="file" name="${key}Photo" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment"><span class="upload-preview"></span></label>${photo(r[key+'Photo'],i?'已保存燃气照片':'已保存电表照片')}</div>`).join('')}</div>${locked?'':`<section class="meter-ocr" aria-label="AI抄表识别"><div class="meter-ocr-heading"><strong>AI识别两张表</strong>${badge('核对后才保存')}</div><p class="muted">${mode==='cloud'?'点击识别后，将本次选定的电表和气表照片副本发送给 Anthropic（Claude）提取读数。先快速识别，读不清时自动加强复核一次；按API用量计费。不会发送住户或费用；原图仅在点击保存后存入当前宿舍私有存储。':'AI识别仅云端登录后可用。当前照片仅在点击保存后存入本机浏览器，仍可手工输入和核对。'}</p><button type="button" class="button secondary" data-action="meter-ocr" disabled>AI识别两张表</button>${mode==='cloud'?'<details class="ocr-diagnostics"><summary>识别有问题？</summary><button type="button" class="text-button" data-action="meter-ocr-check">检查AI服务（不传照片）</button></details>':''}<p class="meter-ocr-status" role="status" aria-live="polite">${mode==='cloud'?'正在检查AI识别服务…':'AI识别仅云端登录后可用，仍可手工录入。'}</p><div class="meter-ocr-results"></div></section>`}<div class="two-fields">${field('电表累计数（kWh）','electric',r.electric,'number','required min="0" max="1000000000" step="any" inputmode="decimal"'+(locked?' readonly':''))}${field('燃气累计数（m³）','gas',r.gas,'number','required min="0" max="1000000000" step="any" inputmode="decimal"'+(locked?' readonly':''))}</div><small class="muted">支持 JPG / PNG / WebP / GIF，每张最多 8 MB。保存原图与文件时间；文件时间不代表已验证的拍摄日期。</small>${field('备注（可选）','note',r.note,'text','maxlength="300" placeholder="如：已与原照片核对"')}${locked?(r.override?'<input type="hidden" name="override" value="1"><p class="muted">历史实际抄表日与归属日不同，按已确认归属保留，不另估日期差额。</p>':''):r.id?check('override','实际抄表日不同于归属日时，我明确同意按归属日结算（不补估差额）。',r.override):''}${check('confirmed','我已人工核对电、气两项累计表数。',false)}<div class="form-actions"><button type="submit" class="button primary">保存已核对表数</button>${r.id?'<button type="button" class="button secondary" data-action="cancel-edit">取消</button>':''}</div></form></section></div>`;
 }
 function rates(){
   const latest=[...state.rates].sort((a,b)=>b.from.localeCompare(a.from))[0];
@@ -205,7 +256,7 @@ function updateMeterOcr(ui){
   ui.form.querySelector('[type="submit"]').disabled=ui.runPending||busy;ui.form.elements.confirmed.disabled=ui.runPending;
   if(!info.response){results.replaceChildren();return;}
   const response=info.response,usable=METER_KINDS.some(kind=>usableMeterResult(kind,response.readings[kind]));
-  results.innerHTML=`<div class="meter-ocr-result-grid">${METER_KINDS.map(kind=>{const result=response.readings[kind],ok=usableMeterResult(kind,result);return `<article class="meter-ocr-result ${ok?'':'needs-review'}"><span>${kind==='electric'?'电表':'气表'}识别建议</span><strong>${ok?esc(result.value)+' <small>'+ (kind==='electric'?'kWh':'m³')+'</small>':'需要人工核对'}</strong><p>表盘显示：${esc(result.display||'未能读清')}</p>${result.meterNumber?'<p>表号：'+esc(result.meterNumber)+'</p>':''}${result.warnings.map(warning=>'<p class="meter-ocr-warning">'+esc(warning)+'</p>').join('')}${!ok?'<p>请检查是否拍对表、是否清晰，并手工填写。</p>':''}</article>`;}).join('')}</div><p class="muted">识别建议尚未保存。采用后请对照两张原图核对，可直接修正读数；日期仍由你填写。</p><div class="form-actions"><button type="button" class="button secondary" data-action="meter-ocr-adopt" ${usable?'':'disabled'}>采用识别读数</button><button type="button" class="text-button" data-action="meter-ocr-clear">清除识别建议</button></div>`;
+  results.innerHTML=`<div class="meter-ocr-result-grid">${METER_KINDS.map(kind=>{const result=response.readings[kind],ok=usableMeterResult(kind,result);return `<article class="meter-ocr-result ${ok?'':'needs-review'}"><span>${kind==='electric'?'电表':'气表'}识别建议</span><strong>${ok?esc(result.value)+' <small>'+ (kind==='electric'?'kWh':'m³')+'</small>':'需要人工核对'}</strong><p>表盘显示：${esc(result.display||'未能读清')}</p>${result.meterNumber?'<p>照片表号：'+esc(result.meterNumber)+'</p>':''}<p class="meter-match">${esc(meterMatchLabel(verifyMeterNumber(state.meterProfiles?.[kind]?.number,result.meterNumber)))}</p>${result.warnings.map(warning=>'<p class="meter-ocr-warning">'+esc(warning)+'</p>').join('')}${!ok?'<p>请检查是否拍对表、是否清晰，并手工填写。</p>':''}</article>`;}).join('')}</div><p class="muted">识别建议尚未保存。采用后请对照两张原图核对，可直接修正读数；日期仍由你填写。</p><div class="form-actions"><button type="button" class="button secondary" data-action="meter-ocr-adopt" ${usable?'':'disabled'}>采用识别读数</button><button type="button" class="text-button" data-action="meter-ocr-clear">清除识别建议</button></div>`;
 }
 function setupMeterOcr(token){
   const form=document.querySelector('#reading-form');if(!form?.querySelector||form.dataset.meterLocked==='true')return;
@@ -244,9 +295,10 @@ async function recognizeMeterPhotos(){
 }
 function adoptMeterReadings(){
   const ui=readingOcr;if(!ui||!meterOcrCurrent(ui)||ui.runPending||busy)return;
-  try{const values=ui.session.adopt();for(const [kind,value] of Object.entries(values))ui.form.elements[kind].value=String(value);ui.form.elements.confirmed.checked=false;ui.message=Object.keys(values).length===2?'已填入两项识别建议，请对照照片核对；可手工修正，然后勾选确认并保存。':'仅填入可读清的一项，另一项请手工输入；两项都核对后才能保存。';updateMeterOcr(ui);}catch(error){ui.message=error.message;updateMeterOcr(ui);}
+  try{if(METER_KINDS.some(kind=>verifyMeterNumber(state.meterProfiles?.[kind]?.number,ui.response?.readings?.[kind]?.meterNumber)==='mismatch'))throw new Error('照片表号不一致，请重新拍摄正确的表；本次建议不能自动采用。');const values=ui.session.adopt();for(const [kind,value] of Object.entries(values))ui.form.elements[kind].value=String(value);ui.form.elements.confirmed.checked=false;ui.message=Object.keys(values).length===2?'已填入两项识别建议，请对照照片核对；可手工修正，然后勾选确认并保存。':'仅填入可读清的一项，另一项请手工输入；两项都核对后才能保存。';updateMeterOcr(ui);}catch(error){ui.message=error.message;updateMeterOcr(ui);}
 }
 app.addEventListener('input',event=>{
+  if(workerMode)return;
   const el=event.target,ui=readingOcr;if(!ui||!el.closest?.('#reading-form')||el.type==='file'||el.name==='confirmed')return;
   ui.session.edit(el.name);ui.form.elements.confirmed.checked=false;ui.message=ui.runPending?'内容已修改，本次识别结果将忽略；请等待请求结束后核对保存。':'输入已修改，请重新核对电、气两项后勾选确认。';updateMeterOcr(ui);
 });
@@ -260,6 +312,7 @@ async function readUpload(file){
   return {id:id(),blob:file,meta:{name:file.name,type:file.type,fileDate:file.lastModified?new Date(file.lastModified).toISOString():null,addedAt:new Date().toISOString()}};
 }
 app.addEventListener('submit',event=>{
+  if(workerMode)return;
   event.preventDefault();const form=event.target;if(form.id==='reading-form'&&readingOcr?.runPending){notice('正在识别两张照片，请等待识别完成后再核对、保存。',true);return;}if(!form.reportValidity())return;
   task(async operationEpoch=>{
     const saveCurrent=(next,photos=[])=>commit(next,photos,operationEpoch);
@@ -268,7 +321,23 @@ app.addEventListener('submit',event=>{
     if(form.id==='cloud-workspace-form'){await selectCloud(v.workspaceId);return;}
     if(!state)throw new Error('请先打开数据区。');
     const next=structuredClone(state);
-    if(form.getAttribute('id')==='stay-form'){
+    if(form.id==='movement-form'){
+      const chosen=state.stays.find(stay=>stay.id===v.stayId);movement={kind:v.kind,stage:'reading',date:v.date,stayId:v.stayId||'',personId:v.personId||chosen?.personId||'',name:v.name||chosen?.name||''};
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(v.date)||v.date>today())throw new Error('请选择有效的实际进出日期，不能晚于今天。');
+      if(v.kind==='out'&&!chosen)throw new Error('请选择搬出的住户。');editing=null;render();return;
+    }else if(form.id==='movement-confirm-form'){
+      if(!movement?.preview||!f.has('reviewed'))throw new Error('请核对人员、两项表数和全员费用后确认。');
+      const personId=movement.preview.personId,photos=movement.photos||[];await saveCurrent(movement.preview.state,photos);movement=null;accountSelected=personId;location.hash='#/accounts';render();notice('人员变化和本段费用已保存；收到钱后再登记实收。');return;
+    }else if(form.id==='account-payment-form'){
+      if(!f.has('received'))throw new Error('只登记已实际收到的钱。');await saveCurrent(recordAccountPayment(state,v));return;
+    }else if(form.id==='meter-profile-form'){
+      next.meterProfiles=Object.fromEntries(METER_KINDS.map(k=>[k,{number:v[k+'Number'].trim(),location:v[k+'Location'].trim(),hint:v[k+'Hint'].trim()}]));validateMeterProfiles(next.meterProfiles);await saveCurrent(next);return;
+    }else if(form.id==='task-adopt-form'){
+      const sub=taskReview?.submission;if(!sub||mode!=='cloud'||!f.has('reviewed'))throw new Error('请先核对原照片与表数。');
+      if(next.readings.some(r=>r.period===v.period))throw new Error('该日期已有已确认表数，请先核对原记录，不重复采用。');
+      next.readings.push({id:id(),period:v.period,actual:sub.actualDate,electric:sub.electric,gas:sub.gas,confirmed:true,override:v.period!==sub.actualDate,note:sub.note||'',electricPhoto:sub.photos.electric,gasPhoto:sub.photos.gas});
+      const saved=await cloudWorkspace.adoptMeterTask(taskReview.id,next,revision,v.reviewNote||'');checkView(operationEpoch);state=saved.state;revision=saved.revision;cloudSavedAt=saved.savedAt;taskReview=null;render();notice('资料已核对保存；办理人员进出时可共用这次表数。');return;
+    }else if(form.getAttribute('id')==='stay-form'){
       const old=state.stays.find(s=>s.id===v.id),pid=old?.personId||v.personId||id();
       const name=String(v.name).trim();
       if(!name)throw new Error('请填写住户姓名。');
@@ -279,11 +348,13 @@ app.addEventListener('submit',event=>{
       if(old)next.stays[next.stays.findIndex(s=>s.id===old.id)]=stay;else next.stays.push(stay);
       next.stays.forEach(s=>{if(s.personId===pid)s.name=name;});await saveCurrent(next);
     }else if(form.getAttribute('id')==='reading-form'){
+      const readingContext={renderToken,movement},assertReadingContext=()=>{checkView(operationEpoch);if(renderToken!==readingContext.renderToken||movement!==readingContext.movement||form.isConnected===false)throw stale();};
       const old=state.readings.find(r=>r.id===v.id),photos=[],recognitions=Object.fromEntries(METER_KINDS.map(kind=>[kind,readingMeterRecognition(kind,form.elements[kind+'Photo'].files[0])]));
-      const r={...old,id:old?.id||id(),period:v.period,actual:v.actual,electric:Number(v.electric),gas:Number(v.gas),confirmed:f.has('confirmed'),override:f.has('override'),note:v.note};
-      if(next.readings.some(x=>x.period===r.period&&x.id!==r.id))throw new Error('该归属日期已有表数，请编辑已有记录。');
-      for(const kind of METER_KINDS){const key=kind+'Photo',file=f.get(key),p=await readUpload(file);if(p){const recognition=recognitions[kind];photos.push(p);r[key]={id:p.id,...p.meta,...(recognition?{recognition}:{})};}}
-      if(old)next.readings[next.readings.findIndex(x=>x.id===old.id)]=r;else next.readings.push(r);
+      const r={...old,id:old?.id||id(),period:old?v.period:v.actual,actual:v.actual,electric:Number(v.electric),gas:Number(v.gas),confirmed:f.has('confirmed'),override:f.has('override'),note:v.note};
+      if(!movement&&next.readings.some(x=>x.period===r.period&&x.id!==r.id))throw new Error('该归属日期已有表数，请编辑已有记录。');
+      for(const kind of METER_KINDS){const key=kind+'Photo',file=f.get(key),p=await readUpload(file);assertReadingContext();if(p){const recognition=recognitions[kind];photos.push(p);r[key]={id:p.id,...p.meta,...(recognition?{recognition}:{})};}}
+      assertReadingContext();if(old)next.readings[next.readings.findIndex(x=>x.id===old.id)]=r;else next.readings.push(r);
+      if(movement?.stage==='reading'){movement.preview=previewMovement(state,{...movement,reading:r});movement.photos=photos;movement.stage='review';render();return;}
       await saveCurrent(next,photos);
     }else if(form.getAttribute('id')==='rate-form'){
       const r={...v,id:v.id||id(),includeNk:f.has('includeNk')};
@@ -306,6 +377,7 @@ app.addEventListener('submit',event=>{
   });
 });
 app.addEventListener('click',event=>{
+  if(workerMode)return;
   const button=event.target.closest('[data-action]');if(!button)return;
   if(button.dataset.action==='meter-ocr-check'){void checkMeterService();return;}
   if(button.dataset.action==='meter-ocr'){void recognizeMeterPhotos();return;}
@@ -315,7 +387,19 @@ app.addEventListener('click',event=>{
   task(async operationEpoch=>{
     const saveCurrent=(next,photos=[])=>commit(next,photos,operationEpoch);
     const action=button.dataset.action,key=button.dataset.id;
-    if(action==='open-cloud')await openCloud();
+    if(action==='start-move-in'||action==='start-move-out'){movement={kind:action==='start-move-in'?'in':'out',stage:'form',date:today(),stayId:key||''};taskReview=null;location.hash='#/people';render();}
+    else if(action==='cancel-movement'){movement=null;render();}
+    else if(action==='movement-back'){movement.stage='form';delete movement.preview;delete movement.photos;render();}
+    else if(action==='movement-use-reading'){
+      const r=movementReadingForDate(state,movement?.date);if(!r)throw new Error('当天已确认表数不存在。');movement.preview=previewMovement(state,{...movement,reading:r});movement.photos=[];movement.stage='review';render();
+    }else if(action==='open-account'){accountSelected=key||null;location.hash='#/accounts';render();}
+    else if(action==='print-account'){printAccount(key);}
+    else if(action==='task-create'){
+      if(!CLOUD_CONFIG.meterTasksEnabled)throw new Error('拍表链接尚待确认开通。');const created=await cloudWorkspace.createMeterTask();checkView(operationEpoch);taskLink=location.origin+location.pathname+'#/task/'+created.task.id+'/'+created.token;render();notice('链接仅用于本次两张表；请只交给本次拍表人。');
+    }else if(action==='task-revoke'){await cloudWorkspace.revokeMeterTask(key);checkView(operationEpoch);taskLink='';render();notice('任务已撤销。');}
+    else if(action==='task-review'){taskReview=ownerTasks.find(t=>t.id===key);render();}
+    else if(action==='task-review-back'){taskReview=null;render();}
+    else if(action==='open-cloud')await openCloud();
     else if(action==='open-demo')await openMode('demo');
     else if(action==='open-local')await openMode('local');
     else if(action==='cloud-refresh'){if(cloudSelected)await selectCloud(cloudSelected.id);else await openCloud();}
@@ -339,9 +423,11 @@ app.addEventListener('click',event=>{
   });
 });
 app.addEventListener('change',event=>{
+  if(workerMode)return;
   const el=event.target;
   if(el.id==='month'){try{monthBounds(el.value);assertMonthOutsideLegacy(state,el.value);month=el.value;render();}catch(e){el.value=month;notice(e.message,true);}}
   if(el.id==='legacy-settlement'){legacySelectedId=el.value;render();}
+  if(el.name==='personId'&&el.closest('#movement-form')){const person=residentPeople().find(([personId])=>personId===el.value);el.form.elements.name.value=person?.[1]||'';}
   if(el.name==='personId'&&el.closest('#stay-form')){const person=residentPeople().find(([personId])=>personId===el.value);el.form.elements.name.value=person?.[1]||'';}
   if(el.closest?.('#reading-form')&&el.type==='file'&&readingOcr){const kind=el.name.replace(/Photo$/,'');if(METER_KINDS.includes(kind)){readingOcr.session.select(kind,el.files[0]);readingOcr.form.elements.confirmed.checked=false;readingOcr.message=readingOcr.runPending?'照片已更换，本次识别结果将忽略。':'照片尚未识别。拍好两张后点击AI识别。';updateMeterOcr(readingOcr);}}
   if(el.type==='file'&&el.closest('.upload')){
@@ -354,6 +440,6 @@ function printBill(openDialog=true){
   if(!document.querySelector('#print-root').children.length)throw new Error('本月没有住户，只有管理方费用，无需住户签字单。');
   if(openDialog)window.print();
 }
-window.addEventListener('hashchange',()=>{editing=null;if(state)render();window.scrollTo({top:0,behavior:'instant'});});
-window.addEventListener('beforeprint',()=>{if(state&&current()[0]==='history'&&legacySettlement())printLegacy(false);else if(state&&bill())printBill(false);else document.querySelector('#print-root').innerHTML='<p>请先打开已确认的月结或历史结算，再打印签字单。</p>';});
-(mode==='cloud'?openCloud():openMode(mode)).catch(e=>{app.innerHTML=`<div class="fatal"><h1>暂时无法打开宿舍数据</h1><p>${esc(e.message)}</p><p>请检查浏览器存储权限，重新载入页面。不要清除已有网站数据。</p><button id="reload" class="button primary">重新载入</button></div>`;document.querySelector('#reload').onclick=()=>location.reload();});
+window.addEventListener('hashchange',()=>{if(workerMode)return;editing=null;if(location.hash!=='#/people')movement=null;if(location.hash!=='#/readings'&&location.hash!=='#/people')taskReview=null;if(state)render();window.scrollTo({top:0,behavior:'instant'});});
+window.addEventListener('beforeprint',()=>{if(workerMode)return;if(state&&current()[0]==='accounts'&&accountSelected){printAccount(accountSelected,false);return;}if(state&&current()[0]==='history'&&legacySettlement())printLegacy(false);else if(state&&bill())printBill(false);else document.querySelector('#print-root').innerHTML='<p>请先打开已确认的月结或历史结算，再打印签字单。</p>';});
+(workerMode?startMeterTaskPage(app,CLOUD_CONFIG):(mode==='cloud'?openCloud():openMode(mode))).catch(e=>{app.innerHTML=`<div class="fatal"><h1>暂时无法打开宿舍数据</h1><p>${esc(e.message)}</p><p>请检查浏览器存储权限，重新载入页面。不要清除已有网站数据。</p><button id="reload" class="button primary">重新载入</button></div>`;document.querySelector('#reload').onclick=()=>location.reload();});

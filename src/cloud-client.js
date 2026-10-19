@@ -26,6 +26,21 @@ const SAFE_ERRORS = Object.freeze({
   OCR_PROVIDER_PARAMETERS: 'Anthropic未接受请求参数，请管理方检查服务配置；仍可手工录入。',
   OCR_PROVIDER_SCHEMA: 'Anthropic未接受识别结果格式，请管理方检查服务配置；仍可手工录入。',
   OCR_PROVIDER_IMAGE: 'Anthropic未能读取照片，请重新选择清晰的JPG或PNG照片；仍可手工录入。',
+  INTERVAL_INVALID:'区间结算内容无效，请重新核对。',
+  INTERVAL_INPUTS_MISMATCH:'区间结算依据不一致，请刷新核对。',
+  BILL_COVERAGE_OVERLAP:'这个区间已结算过，不能重复收费。',
+  ONE_CONFIRMATION_PER_SAVE:'每次只确认一段费用。',
+  METER_PROFILE_REQUIRED:'表资料已改变，请刷新并保留当前配置。',
+  MOVEMENT_APPEND_ONLY:'已保存的人员进出记录不能改写。',
+  ONE_MOVEMENT_PER_SAVE:'每次办理一位人员的入住或搬出。',
+  MOVEMENT_INVALID:'人员进出与抄表资料不一致，请重新核对。',
+  TASK_UNAVAILABLE:'抄表任务不可用、已过期或已撤销，请刷新任务列表。',
+  TASK_CLOSED:'抄表任务已提交或关闭，请刷新核对，不能重复提交。',
+  TASK_CHANGED:'抄表任务或指引已变化，请刷新后核对。',
+  TASK_LIMIT:'今日创建任务次数已达限制，请稍后再试。',
+  METER_CONFIG_REQUIRED:'请先在设置中填好电表和气表的可信表号、位置。',
+  SERIAL_REVIEW_REQUIRED:'表号未自动核对通过，请对照原照片填写复核说明。',
+  TASK_READING_MISMATCH:'采用的表数或照片与待审核资料不一致，请刷新核对。',
   OCR_UNAVAILABLE: 'AI服务暂时不可用，本次不会自动重试，请手工核对或稍后重新识别。',
   OCR_INVALID_RESULT: 'AI未能可靠识别，请重拍清晰照片，或手工输入。',
   PHOTO_INVALID: '识别照片格式或大小无效，请重新拍照。'
@@ -50,7 +65,7 @@ export function createCloudClient(options = {}) {
     const unavailable = async () => {throw fail('CLOUD_NOT_CONFIGURED', '独立云端项目尚未配置，请先使用示例或本机数据。');};
     return Object.freeze({configured: false, signIn: unavailable, getUser: unavailable, refreshSession: unavailable,
       signOut: async () => ({remoteRevoked: true}), hasSession: () => false, getSessionInfo: () => null,
-      listWorkspaces: unavailable, loadWorkspace: unavailable, saveWorkspace: unavailable, uploadPhoto: unavailable, getPhoto: unavailable, ocrStatus: unavailable, recognizeMeters: unavailable});
+      listWorkspaces: unavailable, loadWorkspace: unavailable, saveWorkspace: unavailable, uploadPhoto: unavailable, getPhoto: unavailable, ocrStatus: unavailable, recognizeMeters: unavailable, listMeterTasks:unavailable,createMeterTask:unavailable,revokeMeterTask:unavailable,adoptMeterTask:unavailable});
   }
   if (typeof fetchImpl !== 'function') throw new TypeError('当前浏览器不支持云端连接。');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new TypeError('请求时限无效。');
@@ -123,6 +138,7 @@ export function createCloudClient(options = {}) {
     return fail('REQUEST_REJECTED', '云端未接受本次操作，请核对资料后重试。');
   }
   async function serverError(response, captured, mutation) {
+    if(mutation&&(response.status===408||response.status>=500))return uncertain();
     if ([400, 402, 403, 404, 409, 422, 429, 502, 503].includes(response.status)) {
       try {
         const code = (await parse(response, captured))?.error?.code;
@@ -248,6 +264,25 @@ export function createCloudClient(options = {}) {
     if (!PHOTO_TYPES.has(blob.type) || !blob.size || blob.size > MAX_PHOTO) throw fail('INVALID_PHOTO', '云端原照片格式或大小不符合要求。');
     return blob;
   }
+  function taskRecord(value){
+    if(!value||!UUID.test(value.id||'')||typeof value.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value.date)||!Number.isFinite(Date.parse(value.date))||new Date(value.date).toISOString().slice(0,10)!==value.date||!['open','submitted','adopted','revoked','expired'].includes(value.status)||typeof value.expiresAt!=='string'||!Number.isFinite(Date.parse(value.expiresAt)))throw fail('BAD_RESPONSE','抄表任务信息无效，请刷新列表。');
+    return value;
+  }
+  async function listMeterTasks(workspaceId){
+    identifier(workspaceId);const data=await jsonRequest(`/functions/v1/meter-task?action=list&workspaceId=${workspaceId}`);
+    if(!Array.isArray(data?.tasks)||data.tasks.length>200)throw fail('BAD_RESPONSE','抄表任务列表无效。');data.tasks.forEach(taskRecord);if(new Set(data.tasks.map(t=>t.id)).size!==data.tasks.length)throw fail('BAD_RESPONSE','抄表任务列表无效。');return data;
+  }
+  async function createMeterTask(workspaceId,expectedRevision){
+    identifier(workspaceId);if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw fail('INVALID_STATE','云端版本无效，请刷新核对。');const data=await jsonRequest('/functions/v1/meter-task',{method:'POST',contentType:'application/json',mutation:true,noRetry:true,body:JSON.stringify({action:'create',workspaceId,expectedRevision,expiresInHours:24})});
+    try{taskRecord(data?.task);if(data.task.status!=='open'||typeof data.token!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(data.token))throw uncertain();return data;}catch{throw uncertain();}
+  }
+  async function revokeMeterTask(workspaceId,taskId,expectedRevision){
+    identifier(workspaceId);identifier(taskId);if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw fail('INVALID_STATE','云端版本无效，请刷新核对。');const data=await jsonRequest('/functions/v1/meter-task',{method:'POST',contentType:'application/json',mutation:true,noRetry:true,body:JSON.stringify({action:'revoke',workspaceId,taskId,expectedRevision})});try{taskRecord(data?.task);if(data.task.id!==taskId||data.task.status!=='revoked')throw uncertain();return data;}catch{throw uncertain();}
+  }
+  async function adoptMeterTask(workspaceId,taskId,state,expectedRevision,reviewNote=''){
+    if(state?.mode!=='cloud')throw fail('INVALID_STATE','云端数据无效，请刷新核对。');
+    identifier(workspaceId);identifier(taskId);if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw fail('INVALID_STATE','云端版本无效，请刷新核对。');const data=await jsonRequest('/functions/v1/meter-task',{method:'POST',contentType:'application/json',mutation:true,noRetry:true,body:JSON.stringify({action:'adopt',workspaceId,taskId,expectedRevision,state,reviewNote})});try{workspaceResult(data,workspaceId);if(data?.adoptedTaskId!==taskId||data.revision!==expectedRevision+1||data.state===null)throw uncertain();return data;}catch{throw uncertain();}
+  }
   async function ocrStatus(workspaceId, checkProtocol = false) {
     if(ocrProvider!=='Anthropic')throw fail('OCR_PAGE_OUTDATED',SAFE_ERRORS.OCR_PAGE_OUTDATED);
     identifier(workspaceId);
@@ -293,5 +328,5 @@ export function createCloudClient(options = {}) {
     }catch {throw fail('OCR_INVALID_RESULT',SAFE_ERRORS.OCR_INVALID_RESULT);}
     return data;
   }
-  return Object.freeze({configured: true, signIn, getUser, refreshSession, signOut, hasSession: () => !!session, getSessionInfo, listWorkspaces, loadWorkspace, saveWorkspace, uploadPhoto, getPhoto, ocrStatus, recognizeMeters});
+  return Object.freeze({configured: true, signIn, getUser, refreshSession, signOut, hasSession: () => !!session, getSessionInfo, listWorkspaces, loadWorkspace, saveWorkspace, uploadPhoto, getPhoto, ocrStatus, recognizeMeters,listMeterTasks,createMeterTask,revokeMeterTask,adoptMeterTask});
 }

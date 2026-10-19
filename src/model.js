@@ -1,5 +1,8 @@
 import {blankState, calculateMonth, cents, monthBounds, today, validateState, validDate} from './engine.js';
 import {assertMonthOutsideLegacy, legacyNextMonth} from './history.js';
+import {validateIntervalState} from './intervals.js';
+import {validateMeterProfiles} from './meters.js';
+import {validateMovementEvents} from './movements.js';
 
 export const id = () => crypto.randomUUID();
 export function exampleState() {
@@ -42,13 +45,13 @@ export function recordPayment(state,{billId,personId,value,date,method,note}) {
   return validateState(next);
 }
 export function photoIds(state) {
-  const readings=[...state.readings,...state.bills.flatMap(b=>b.inputs?.readings||[])];
+  const readings=[...state.readings,...state.bills.flatMap(b=>b.inputs?.readings||[]),...(state.intervalBills||[]).flatMap(b=>b.inputs?.readings||[]),...(state.movementEvents||[]).map(event=>event.observation).filter(Boolean)];
   return [...new Set(readings.flatMap(r=>[r.electricPhoto?.id,r.gasPhoto?.id]).filter(Boolean))];
 }
 export function validateBackup(data,mode) {
   if(mode==='cloud')throw new Error('云端暂不支持整份替换恢复，请保留导出备份并联系管理方。');
   if(data?.format!=='kochi-dorm-local-backup'||data.version!==1||data.state?.mode!==mode) throw new Error('备份格式不正确或数据区不同；请先切换至备份对应的示例/本机数据区。');
-  validateState(data.state);
+  validateIntervalState(data.state);validateMeterProfiles(data.state.meterProfiles);validateMovementEvents(data.state);
   if(!Array.isArray(data.photos)||data.photos.length>6000) throw new Error('照片备份格式不正确。');
   const ids=new Set();
   for(const p of data.photos) {

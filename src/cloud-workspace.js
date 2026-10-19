@@ -1,10 +1,13 @@
 import {validateState} from './engine.js';
+import {validateIntervalState} from './intervals.js';
+import {validateMeterProfiles} from './meters.js';
+import {validateMovementEvents} from './movements.js';
 
 const fail=(code,message)=>Object.assign(new Error(message),{code});
 const copy=value=>structuredClone(value);
 function cloudState(state) {
   if(state?.mode!=='cloud') throw fail('INVALID_STATE','只允许独立的云端数据，不能自动上传本机或示例数据。');
-  try {return validateState(copy(state));}
+  try {const next=copy(state);validateState(next);validateIntervalState(next);validateMeterProfiles(next.meterProfiles);return validateMovementEvents(next);}
   catch {throw fail('INVALID_STATE','云端数据内容无效，请核对资料。');}
 }
 function workspace(value) {
@@ -85,6 +88,27 @@ export function createCloudWorkspace(client) {
         if(['REVISION_CONFLICT','SAVE_UNCERTAIN'].includes(error.code)) blocked=true;
         throw error;
       } finally {if(ticket===epoch) saving=false;}
+    },
+    async meterTasks(){const {ticket,id}=selected();try{const result=await client.listMeterTasks(id);guard(ticket);return result;}catch(error){guard(ticket);throw error;}},
+    async createMeterTask(){
+      const {ticket,id,revision}=selected();if(blocked||saving||recognizing)throw fail('RELOAD_REQUIRED','请先完成当前操作并刷新云端。');saving=true;
+      try{const result=await client.createMeterTask(id,revision);guard(ticket);return result;}
+      catch(error){guard(ticket);if(['SAVE_UNCERTAIN','REVISION_CONFLICT'].includes(error.code))blocked=true;throw error;}
+      finally{if(ticket===epoch)saving=false;}
+    },
+    async revokeMeterTask(taskId){
+      const {ticket,id,revision}=selected();if(blocked||saving||recognizing)throw fail('RELOAD_REQUIRED','请先完成当前操作并刷新云端。');saving=true;
+      try{const result=await client.revokeMeterTask(id,taskId,revision);guard(ticket);return result;}
+      catch(error){guard(ticket);if(['SAVE_UNCERTAIN','REVISION_CONFLICT'].includes(error.code))blocked=true;throw error;}
+      finally{if(ticket===epoch)saving=false;}
+    },
+    async adoptMeterTask(taskId,next,expectedRevision,reviewNote=''){
+      const {ticket,id,revision}=selected();if(blocked||saving||recognizing)throw fail('RELOAD_REQUIRED','请先刷新云端并完成当前操作。');
+      if(expectedRevision!==revision){blocked=true;throw fail('REVISION_CONFLICT','云端版本已变化，请先刷新核对。');}
+      const state=cloudState(next);saving=true;
+      try{const value=await client.adoptMeterTask(id,taskId,state,revision,reviewNote);guard(ticket);const saved=record(value,id);if(saved.revision!==revision+1||saved.state===null)throw fail('SAVE_UNCERTAIN','采用响应异常，请刷新核对。');current=saved;return copy(saved);}
+      catch(error){guard(ticket);if(['INVALID_RESPONSE','INVALID_STATE','BAD_RESPONSE'].includes(error.code))error=fail('SAVE_UNCERTAIN','采用响应异常，请刷新云端核对结果。');if(['REVISION_CONFLICT','SAVE_UNCERTAIN'].includes(error.code))blocked=true;throw error;}
+      finally{if(ticket===epoch)saving=false;}
     },
     async photo(photoId) {
       const {ticket,id}=selected();

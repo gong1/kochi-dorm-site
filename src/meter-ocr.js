@@ -16,7 +16,7 @@ export function createMeterOcrSession(){
     finish(ticket,value){if(!this.current(ticket))return false;if(value?.provider!=='Anthropic'||!METER_KINDS.every(kind=>['claude-haiku-5-5','claude-sonnet-5-5'].includes(value.models?.[kind])))throw new Error('识别服务来源不符，请重新打开抄表页面。');pending=false;response=value;for(const kind of METER_KINDS)recognized[kind]={file:files[kind],metadata:{version:1,provider:value.provider,model:value.models[kind],recognizedAt:value.recognizedAt,requestId:value.requestId,result:structuredClone(value.readings[kind])}};return true;},
     fail(ticket){if(!this.current(ticket))return false;pending=false;return true;},
     adopt(){if(!response)throw new Error('请先识别当前两张照片。');const values={};for(const kind of METER_KINDS)if(usableMeterResult(kind,response.readings[kind])){values[kind]=response.readings[kind].value;applied.add(kind);}if(!Object.keys(values).length)throw new Error('两张照片都需要手工核对，暂不能采用识别读数。');return values;},
-    metadata(kind,file){const item=recognized[kind];return item?.file===file?structuredClone(item.metadata):null;},
+    metadata(kind,file){const item=recognized[kind];return item&&item.file===file?structuredClone(item.metadata):null;},
     clear(){invalidate();for(const kind of METER_KINDS)recognized[kind]=null;applied.clear();},
     info(){return {pending,response,applied:[...applied],hasPhotos:METER_KINDS.every(kind=>Boolean(files[kind]))};}
   };

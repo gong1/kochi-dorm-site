@@ -19,6 +19,7 @@ export function assertMonthOutsideLegacy(state,month) {
   if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month || ''))historyError('请选择有效月份。');
   const legacy=state.legacySettlements || [];
   if(legacy.some(h=>month>=h.periodStart.slice(0,7)&&month<=h.periodEnd.slice(0,7)))historyError('该月份属于已确认历史协议，不能再次生成月结或重复收费。');
+  if((state.intervalBills||[]).some(b=>month>=b.coverageStart?.slice(0,7)&&month<=b.coverageEnd?.slice(0,7)))historyError('该月份已有区间结算，不能再次月结或重复收费。');
   if(legacy.length && (!historyTime(state.legacyOccupancyReviewedAt) || Date.parse(state.legacyOccupancyReviewedAt)>Date.now()))historyError('请先核对历史住户当前谁仍在住、离开或新入住，并明确确认当前入住资料。');
 }
 export function validateLegacyState(state) {

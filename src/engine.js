@@ -57,6 +57,7 @@ export function validateStays(stays) {
     ids.add(s.id);
     if (typeof s.personId!=='string' || !s.personId || s.personId==='__owner' || typeof s.name!=='string' || !s.name.trim() || s.name.length>80) throw new Error('请填写有效的住户姓名和身份。');
     dayNumber(s.start); if (s.end) dayNumber(s.end);
+    if (s.chargeStart!==undefined && (!validDate(s.chargeStart) || ![dayNumber(s.start),dayNumber(s.start)+1].includes(dayNumber(s.chargeStart)))) throw new Error('入住计费起日只能是实际入住日或次日。');
     if (s.end && s.end<s.start) throw new Error(`${s.name}的退房日期早于入住日期。`);
   }
   for (let i=0;i<stays.length;i++) for(let j=i+1;j<stays.length;j++) {
@@ -110,8 +111,8 @@ export function validateReading(r) {
   if (!r.confirmed) throw new Error('请核对并确认两项表数。');
   if (r.actual!==r.period && !r.override) throw new Error('实际抄表日与归属日期不同，请明确确认按归属日期处理。');
 }
-export function calculateMonth({month,stays,readings,rates,legacySettlements,legacyOccupancyReviewedAt}) {
-  assertMonthOutsideLegacy({legacySettlements,legacyOccupancyReviewedAt},month);
+export function calculateMonth({month,stays,readings,rates,legacySettlements,legacyOccupancyReviewedAt,intervalBills}) {
+  assertMonthOutsideLegacy({legacySettlements,legacyOccupancyReviewedAt,intervalBills},month);
   const b=monthBounds(month), r=rateFor(rates,month);
   validateStays(stays);
   const start=readings.find(x=>x.period===b.previous), end=readings.find(x=>x.period===b.end);
@@ -122,14 +123,14 @@ export function calculateMonth({month,stays,readings,rates,legacySettlements,leg
   const g=amount(end.gas,'期末气表')-amount(start.gas,'期初气表');
   if (e<0 || g<0) throw new Error('期末表数小于期初；请核对读数。换表须另行处理，不能直接相减。');
   const people=new Map();
-  for(const s of stays) if(s.start<=b.end && (!s.end || s.end>=b.start)) {
+  for(const s of stays) if((s.chargeStart||s.start)<=b.end && (!s.end || s.end>=b.start)) {
     if (!people.has(s.personId)) people.set(s.personId,{id:s.personId,name:s.name,days:0,fixedWeight:0});
   }
   const rows=[...people.values()];
   const owner={id:'__owner',name:'空置期（管理方承担）',days:0,fixedWeight:0};
   for(let day=dayNumber(b.start);day<=dayNumber(b.end);day++) {
     const ds=new Date(day*DAY).toISOString().slice(0,10);
-    const present=new Set(stays.filter(s=>s.start<=ds && (!s.end||s.end>=ds)).map(s=>s.personId));
+    const present=new Set(stays.filter(s=>(s.chargeStart||s.start)<=ds && (!s.end||s.end>=ds)).map(s=>s.personId));
     if(!present.size){owner.fixedWeight+=1;owner.days++;}
     for(const row of rows) if(present.has(row.id)){row.days++;row.fixedWeight+=1/present.size;}
   }
