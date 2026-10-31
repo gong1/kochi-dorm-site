@@ -1,3 +1,4 @@
+import {addRecurringFee,stopRecurringFee} from './recurring.js';
 import {FEES,calculateMonth,euros,monthBounds,shiftMonth,today,validateState} from './engine.js';
 import {confirmMonth,exampleState,id,newLocalState,paidFor,photoIds,recordPayment,suggestedMonth,validateBackup} from './model.js';
 import {getPhoto,loadLocal,saveWorkspace} from './storage.js';
@@ -328,6 +329,10 @@ app.addEventListener('submit',event=>{
     }else if(form.id==='movement-confirm-form'){
       if(!movement?.preview||!f.has('reviewed'))throw new Error('请核对人员、两项表数和全员费用后确认。');
       const personId=movement.preview.personId,photos=movement.photos||[];await saveCurrent(movement.preview.state,photos);movement=null;accountSelected=personId;location.hash='#/accounts';render();notice('人员变化和本段费用已保存；收到钱后再登记实收。');return;
+    }else if(form.id==='recurring-fee-form'){
+      if(!f.has('reviewed'))throw new Error('请确认开始月份与整月计费。');await saveCurrent(addRecurringFee(state,v));return;
+    }else if(form.id.startsWith('fee-stop-')){
+      await saveCurrent(stopRecurringFee(state,v.feeId,v.end));return;
     }else if(form.id==='account-payment-form'){
       if(!f.has('received'))throw new Error('只登记已实际收到的钱。');await saveCurrent(recordAccountPayment(state,v));return;
     }else if(form.id==='meter-profile-form'){
@@ -393,6 +398,7 @@ app.addEventListener('click',event=>{
     else if(action==='movement-use-reading'){
       const r=movementReadingForDate(state,movement?.date);if(!r)throw new Error('当天已确认表数不存在。');movement.preview=previewMovement(state,{...movement,reading:r});movement.photos=[];movement.stage='review';render();
     }else if(action==='open-account'){accountSelected=key||null;location.hash='#/accounts';render();}
+    else if(action==='show-recurring'){const panel=document.querySelector('#recurring-fees');panel?.scrollIntoView({behavior:'smooth',block:'start'});}
     else if(action==='print-account'){printAccount(key);}
     else if(action==='task-create'){
       if(!CLOUD_CONFIG.meterTasksEnabled)throw new Error('拍表链接尚待确认开通。');const created=await cloudWorkspace.createMeterTask();checkView(operationEpoch);taskLink=location.origin+location.pathname+'#/task/'+created.task.id+'/'+created.token;render();notice('链接仅用于本次两张表；请只交给本次拍表人。');

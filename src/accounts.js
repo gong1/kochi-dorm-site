@@ -1,3 +1,4 @@
+import {recurringCharges,recordFeePayment,feeToday} from './recurring.js';
 import {monthBounds,today,validDate} from './engine.js';
 import {recordPayment} from './model.js';
 import {recordLegacyPayment} from './history.js';
@@ -9,12 +10,12 @@ const sumCents=(left,right)=>{
   if(!Number.isSafeInteger(left)||left<0||!Number.isSafeInteger(right)||right<0||!Number.isSafeInteger(value))fail('个人账户金额无效或超出范围。');
   return value;
 };
-const sourceOrder={legacy:0,monthly:1,interval:2};
+const sourceOrder={legacy:0,monthly:1,interval:2,recurring:3};
 const chronological=(a,b)=>a.date.localeCompare(b.date)||sourceOrder[a.kind]-sourceOrder[b.kind]||a.billId.localeCompare(b.billId)||(a.id||'').localeCompare(b.id||'');
 
 // A projection of confirmed charges and actual receipts only. Readings and
 // unconfirmed calculation previews never become a personal debt here.
-export function accountSummary(state) {
+export function accountSummary(state,asOf=feeToday()) {
   const people=new Map(),now=today();
   const person=(personId,name)=>{
     if(personId==='__owner')return null;
@@ -47,6 +48,12 @@ export function accountSummary(state) {
   for(const bill of state.legacySettlements||[])addBill('legacy',bill,bill.rows,bill.periodEnd,bill.title,row=>row.totalCents);
   for(const bill of state.bills||[])addBill('monthly',bill,bill.result?.rows,monthBounds(bill.month).end,`${bill.month} 月结`,row=>row.total);
   for(const bill of state.intervalBills||[])addBill('interval',bill,bill.result?.rows,bill.coverageEnd,`${bill.coverageStart} 至 ${bill.coverageEnd} 结算`,row=>row.total);
+  for(const fee of state.recurringFees||[])person(fee.personId,fee.name);
+  for(const charge of recurringCharges(state,asOf)){
+    const account=person(charge.personId,charge.name);account.charges.push(charge);
+    account.dueCents=sumCents(account.dueCents,charge.dueCents);account.paidCents=sumCents(account.paidCents,charge.paidCents);
+    account.payments.push(...charge.payments.map(p=>({...p,kind:'recurring',billId:charge.billId,title:charge.title})));
+  }
   // Current names come from occupancy, while every frozen charge keeps its own
   // original bill. A second stay reuses the existing person identity.
   for(const stay of [...state.stays].sort((a,b)=>a.start.localeCompare(b.start)||a.id.localeCompare(b.id))) {
@@ -86,7 +93,8 @@ export function recordAccountPayment(state,{personId,value,date,method,note}) {
     const input={...common,value:decimalCents(allocation)};
     if(charge.kind==='legacy')next=recordLegacyPayment(next,{...input,settlementId:charge.billId});
     else if(charge.kind==='monthly')next=recordPayment(next,{...input,billId:charge.billId});
-    else next=recordIntervalPayment(next,{...input,billId:charge.billId});
+    else if(charge.kind==='interval')next=recordIntervalPayment(next,{...input,billId:charge.billId});
+    else next=recordFeePayment(next,charge,input);
     remaining-=allocation;
     if(!remaining)break;
   }

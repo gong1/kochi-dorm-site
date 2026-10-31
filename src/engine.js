@@ -1,3 +1,4 @@
+import {validateRecurring} from './recurring.js';
 import {validateLegacyState, assertMonthOutsideLegacy} from './history.js';
 export const VERSION = 1;
 export const FEES = [
@@ -186,5 +187,5 @@ export function validateState(s) {
     for(const p of b.payments) if(!p.id || p.personId==='__owner' || !b.result.rows.some(r=>r.id===p.personId)||!Number.isSafeInteger(p.cents)||p.cents<=0||!validDate(p.date)) throw new Error('收款记录无效。');
     for(const row of b.result.rows) if((b.payments||[]).filter(p=>p.personId===row.id).reduce((s,p)=>s+p.cents,0)>row.total) throw new Error('收款超过应交金额。');
   }
-  return validateLegacyState(s);
+  validateRecurring(s);return validateLegacyState(s);
 }
