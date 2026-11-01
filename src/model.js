@@ -46,7 +46,7 @@ export function recordPayment(state,{billId,personId,value,date,method,note}) {
 }
 export function photoIds(state) {
   const readings=[...state.readings,...state.bills.flatMap(b=>b.inputs?.readings||[]),...(state.intervalBills||[]).flatMap(b=>b.inputs?.readings||[]),...(state.movementEvents||[]).map(event=>event.observation).filter(Boolean)];
-  return [...new Set(readings.flatMap(r=>[r.electricPhoto?.id,r.gasPhoto?.id]).filter(Boolean))];
+  return [...new Set([...Object.values(state.meterProfiles||{}).flatMap(p=>(p.photos||[]).map(photo=>photo.id)),...readings.flatMap(r=>[r.electricPhoto?.id,r.gasPhoto?.id]).filter(Boolean)])];
 }
 export function validateBackup(data,mode) {
   if(mode==='cloud')throw new Error('云端暂不支持整份替换恢复，请保留导出备份并联系管理方。');

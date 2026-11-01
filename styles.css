@@ -1872,3 +1872,5 @@ footer{
  .simple-task-row{flex-wrap:wrap}.simple-task-row>div{flex-basis:100%}
  .task-page{padding:18px 12px}.task-page>.panel{padding:24px 18px}
 }
+
+.guide-step{margin:12px 0}.guide-step figcaption{font-size:13px;margin:6px 0;color:var(--muted)}.guide-photo{display:block;width:100%;max-height:320px;object-fit:contain;border-radius:10px;background:#f2f3ef}.guide-dialog{max-width:min(94vw,900px);max-height:94vh;padding:12px;border:0;border-radius:12px}.guide-dialog img{display:block;max-width:100%;max-height:78vh;object-fit:contain}.guide-dialog::backdrop{background:#0009}
