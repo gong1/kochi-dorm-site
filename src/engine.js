@@ -1,5 +1,5 @@
-import {validateRecurring} from './recurring.js';
-import {validateLegacyState, assertMonthOutsideLegacy} from './history.js';
+import {validateRecurring} from './recurring.js?v=d83c263fad5e';
+import {validateLegacyState, assertMonthOutsideLegacy} from './history.js?v=d83c263fad5e';
 export const VERSION = 1;
 export const FEES = [
   ['electricUsage', '电用量费'], ['electricBase', '电基本费'],

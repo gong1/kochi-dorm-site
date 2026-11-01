@@ -1,8 +1,8 @@
-import {blankState, calculateMonth, cents, monthBounds, today, validateState, validDate} from './engine.js';
-import {assertMonthOutsideLegacy, legacyNextMonth} from './history.js';
-import {validateIntervalState} from './intervals.js';
-import {validateMeterProfiles} from './meters.js';
-import {validateMovementEvents} from './movements.js';
+import {blankState, calculateMonth, cents, monthBounds, today, validateState, validDate} from './engine.js?v=d83c263fad5e';
+import {assertMonthOutsideLegacy, legacyNextMonth} from './history.js?v=d83c263fad5e';
+import {validateIntervalState} from './intervals.js?v=d83c263fad5e';
+import {validateMeterProfiles} from './meters.js?v=d83c263fad5e';
+import {validateMovementEvents} from './movements.js?v=d83c263fad5e';
 
 export const id = () => crypto.randomUUID();
 export function exampleState() {

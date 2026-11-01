@@ -1,7 +1,7 @@
-import {prepareMeterPhoto,METER_KINDS,usableMeterResult} from './meter-ocr.js';
-import {meterMatchLabel,verifyMeterNumber,validateMeterExtras,meterGuideGallery} from './meters.js';
-import {validateMeterRecognition} from './engine.js';
-import {validateCloudConfig} from './cloud-config.js';
+import {prepareMeterPhoto,METER_KINDS,usableMeterResult} from './meter-ocr.js?v=d83c263fad5e';
+import {meterMatchLabel,verifyMeterNumber,validateMeterExtras,meterGuideGallery} from './meters.js?v=d83c263fad5e';
+import {validateMeterRecognition} from './engine.js?v=d83c263fad5e';
+import {validateCloudConfig} from './cloud-config.js?v=d83c263fad5e';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN=/^[A-Za-z0-9_-]{43}$/;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

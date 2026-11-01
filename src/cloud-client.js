@@ -1,5 +1,5 @@
-import {CLOUD_CONFIG, validateCloudConfig} from './cloud-config.js';
-import {validateMeterRecognition} from './engine.js';
+import {CLOUD_CONFIG, validateCloudConfig} from './cloud-config.js?v=d83c263fad5e';
+import {validateMeterRecognition} from './engine.js?v=d83c263fad5e';
 
 const PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

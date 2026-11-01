@@ -1,7 +1,7 @@
-import {meterGuideGallery} from './meters.js';
-import {feeToday} from './recurring.js';
-import {euros,monthBounds,today} from './engine.js';
-import {accountSummary} from './accounts.js';
+import {meterGuideGallery} from './meters.js?v=d83c263fad5e';
+import {feeToday} from './recurring.js?v=d83c263fad5e';
+import {euros,monthBounds,today} from './engine.js?v=d83c263fad5e';
+import {accountSummary} from './accounts.js?v=d83c263fad5e';
 
 const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const decimal=value=>`${Math.floor(value/100)}.${String(value%100).padStart(2,'0')}`;

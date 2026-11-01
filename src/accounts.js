@@ -1,8 +1,8 @@
-import {recurringCharges,recordFeePayment,feeToday} from './recurring.js';
-import {monthBounds,today,validDate} from './engine.js';
-import {recordPayment} from './model.js';
-import {recordLegacyPayment} from './history.js';
-import {recordIntervalPayment,validateIntervalState} from './intervals.js';
+import {recurringCharges,recordFeePayment,feeToday} from './recurring.js?v=d83c263fad5e';
+import {monthBounds,today,validDate} from './engine.js?v=d83c263fad5e';
+import {recordPayment} from './model.js?v=d83c263fad5e';
+import {recordLegacyPayment} from './history.js?v=d83c263fad5e';
+import {recordIntervalPayment,validateIntervalState} from './intervals.js?v=d83c263fad5e';
 
 const fail=message=>{throw new Error(message);};
 const sumCents=(left,right)=>{
