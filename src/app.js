@@ -314,28 +314,28 @@ async function readUpload(file){
 }
 app.addEventListener('submit',event=>{
   if(workerMode)return;
-  event.preventDefault();const form=event.target;if(form.id==='reading-form'&&readingOcr?.runPending){notice('正在识别两张照片，请等待识别完成后再核对、保存。',true);return;}if(!form.reportValidity())return;
+  event.preventDefault();const form=event.target,formId=form.getAttribute('id')||'';if(formId==='reading-form'&&readingOcr?.runPending){notice('正在识别两张照片，请等待识别完成后再核对、保存。',true);return;}if(!form.reportValidity())return;
   task(async operationEpoch=>{
     const saveCurrent=(next,photos=[])=>commit(next,photos,operationEpoch);
     const f=new FormData(form),v=Object.fromEntries(f);
-    if(form.id==='cloud-login-form'){await cloud.signIn(String(v.email).trim(),v.password);form.reset();await openCloud();return;}
-    if(form.id==='cloud-workspace-form'){await selectCloud(v.workspaceId);return;}
+    if(formId==='cloud-login-form'){await cloud.signIn(String(v.email).trim(),v.password);form.reset();await openCloud();return;}
+    if(formId==='cloud-workspace-form'){await selectCloud(v.workspaceId);return;}
     if(!state)throw new Error('请先打开数据区。');
     const next=structuredClone(state);
-    if(form.id==='movement-form'){
+    if(formId==='movement-form'){
       const chosen=state.stays.find(stay=>stay.id===v.stayId);movement={kind:v.kind,stage:'reading',date:v.date,stayId:v.stayId||'',personId:v.personId||chosen?.personId||'',name:v.name||chosen?.name||''};
       if(!/^\d{4}-\d{2}-\d{2}$/.test(v.date)||v.date>today())throw new Error('请选择有效的实际进出日期，不能晚于今天。');
       if(v.kind==='out'&&!chosen)throw new Error('请选择搬出的住户。');editing=null;render();return;
-    }else if(form.id==='movement-confirm-form'){
+    }else if(formId==='movement-confirm-form'){
       if(!movement?.preview||!f.has('reviewed'))throw new Error('请核对人员、两项表数和全员费用后确认。');
       const personId=movement.preview.personId,photos=movement.photos||[];await saveCurrent(movement.preview.state,photos);movement=null;accountSelected=personId;location.hash='#/accounts';render();notice('人员变化和本段费用已保存；收到钱后再登记实收。');return;
-    }else if(form.id==='recurring-fee-form'){
+    }else if(formId==='recurring-fee-form'){
       if(!f.has('reviewed'))throw new Error('请确认开始月份与整月计费。');await saveCurrent(addRecurringFee(state,v));return;
-    }else if(form.id.startsWith('fee-stop-')){
+    }else if(formId.startsWith('fee-stop-')){
       await saveCurrent(stopRecurringFee(state,v.feeId,v.end));return;
-    }else if(form.id==='account-payment-form'){
+    }else if(formId==='account-payment-form'){
       if(!f.has('received'))throw new Error('只登记已实际收到的钱。');await saveCurrent(recordAccountPayment(state,v));return;
-    }else if(form.id==='meter-profile-form'){
+    }else if(formId==='meter-profile-form'){
       const uploads=[];next.meterProfiles={};
       for(const k of METER_KINDS){const profile={...state.meterProfiles?.[k],number:v[k+'Number'].trim(),location:v[k+'Location'].trim(),hint:v[k+'Hint'].trim()};
        if(v[k+'Aliases']!==undefined)profile.aliases=v[k+'Aliases'].split(/[,，\n]/).map(x=>x.trim()).filter(Boolean);
@@ -343,12 +343,12 @@ app.addEventListener('submit',event=>{
        if(files.length){profile.photos=[];for(const file of files){const uploaded=await readUpload(file);checkView(operationEpoch);uploads.push(uploaded);profile.photos.push({id:uploaded.id,...uploaded.meta});}}
        next.meterProfiles[k]=profile;
       }validateMeterProfiles(next.meterProfiles);await saveCurrent(next,uploads);return;
-    }else if(form.id==='task-adopt-form'){
+    }else if(formId==='task-adopt-form'){
       const sub=taskReview?.submission;if(!sub||mode!=='cloud'||!f.has('reviewed'))throw new Error('请先核对原照片与表数。');
       if(next.readings.some(r=>r.period===v.period))throw new Error('该日期已有已确认表数，请先核对原记录，不重复采用。');
       next.readings.push({id:id(),period:v.period,actual:sub.actualDate,electric:sub.electric,gas:sub.gas,confirmed:true,override:v.period!==sub.actualDate,note:sub.note||'',electricPhoto:sub.photos.electric,gasPhoto:sub.photos.gas});
       const saved=await cloudWorkspace.adoptMeterTask(taskReview.id,next,revision,v.reviewNote||'');checkView(operationEpoch);state=saved.state;revision=saved.revision;cloudSavedAt=saved.savedAt;taskReview=null;render();notice('资料已核对保存；办理人员进出时可共用这次表数。');return;
-    }else if(form.getAttribute('id')==='stay-form'){
+    }else if(formId==='stay-form'){
       const old=state.stays.find(s=>s.id===v.id),pid=old?.personId||v.personId||id();
       const name=String(v.name).trim();
       if(!name)throw new Error('请填写住户姓名。');
@@ -358,7 +358,7 @@ app.addEventListener('submit',event=>{
       const stay={id:old?.id||id(),personId:pid,name,start:v.start,end:v.end||null};
       if(old)next.stays[next.stays.findIndex(s=>s.id===old.id)]=stay;else next.stays.push(stay);
       next.stays.forEach(s=>{if(s.personId===pid)s.name=name;});await saveCurrent(next);
-    }else if(form.getAttribute('id')==='reading-form'){
+    }else if(formId==='reading-form'){
       const readingContext={renderToken,movement},assertReadingContext=()=>{checkView(operationEpoch);if(renderToken!==readingContext.renderToken||movement!==readingContext.movement||form.isConnected===false)throw stale();};
       const old=state.readings.find(r=>r.id===v.id),photos=[],recognitions=Object.fromEntries(METER_KINDS.map(kind=>[kind,readingMeterRecognition(kind,form.elements[kind+'Photo'].files[0])]));
       const r={...old,id:old?.id||id(),period:old?v.period:v.actual,actual:v.actual,electric:Number(v.electric),gas:Number(v.gas),confirmed:f.has('confirmed'),override:f.has('override'),note:v.note};
@@ -367,16 +367,16 @@ app.addEventListener('submit',event=>{
       assertReadingContext();if(old)next.readings[next.readings.findIndex(x=>x.id===old.id)]=r;else next.readings.push(r);
       if(movement?.stage==='reading'){movement.preview=previewMovement(state,{...movement,reading:r});movement.photos=photos;movement.stage='review';render();return;}
       await saveCurrent(next,photos);
-    }else if(form.getAttribute('id')==='rate-form'){
+    }else if(formId==='rate-form'){
       const r={...v,id:v.id||id(),includeNk:f.has('includeNk')};
       for(const key of ['electricRate','electricBase','gasRate','gasBase','brennwert','zustand','tv','nk'])r[key]=v[key]===''?'':Number(v[key]);
       if(v.id)next.rates[next.rates.findIndex(x=>x.id===v.id)]=r;else next.rates.push(r);await saveCurrent(next);
-    }else if(form.getAttribute('id')==='confirm-form'){assertMonthOutsideLegacy(state,month);if(state.legacySettlements?.length&&!state.legacyOccupancyReviewedAt)throw new Error('请先复核当前入住。');await saveCurrent(confirmMonth(state,month,f.has('reviewed')));}
-    else if(form.getAttribute('id')==='payment-form')await saveCurrent(recordPayment(state,{billId:bill()?.id,...v}));
-    else if(form.getAttribute('id')==='legacy-payment-form')await saveCurrent(recordLegacyPayment(state,{settlementId:legacySettlement()?.id,...v}));
-    else if(form.getAttribute('id')==='legacy-occupancy-form')await saveCurrent(confirmLegacyOccupancy(state,f.has('reviewed')));
-    else if(form.getAttribute('id')==='home-form'){next.homeName=v.homeName.trim();if(!next.homeName)throw new Error('请填写宿舍名称。');await saveCurrent(next);}
-    else if(form.getAttribute('id')==='import-form'){
+    }else if(formId==='confirm-form'){assertMonthOutsideLegacy(state,month);if(state.legacySettlements?.length&&!state.legacyOccupancyReviewedAt)throw new Error('请先复核当前入住。');await saveCurrent(confirmMonth(state,month,f.has('reviewed')));}
+    else if(formId==='payment-form')await saveCurrent(recordPayment(state,{billId:bill()?.id,...v}));
+    else if(formId==='legacy-payment-form')await saveCurrent(recordLegacyPayment(state,{settlementId:legacySettlement()?.id,...v}));
+    else if(formId==='legacy-occupancy-form')await saveCurrent(confirmLegacyOccupancy(state,f.has('reviewed')));
+    else if(formId==='home-form'){next.homeName=v.homeName.trim();if(!next.homeName)throw new Error('请填写宿舍名称。');await saveCurrent(next);}
+    else if(formId==='import-form'){
       if(mode==='cloud')throw new Error('云端暂不支持整份替换恢复。');
       const file=f.get('backup');if(!file?.size||file.size>80*1024*1024)throw new Error('请选择80 MB以内的JSON备份。');
       let data;try{data=JSON.parse(await file.text());}catch{throw new Error('无法读取JSON备份。');}validateBackup(data,mode);
